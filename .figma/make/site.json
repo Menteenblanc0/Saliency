@@ -1,0 +1,10 @@
+{
+  "description": "This web app enables participants to engage in visual attention research by marking areas of interest on images, providing valuable data for studies.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
