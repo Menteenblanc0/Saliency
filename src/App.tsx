@@ -7,19 +7,18 @@ type Tool = "brush" | "eraser";
 interface Point { x: number; y: number; }
 interface Stroke { tool: Tool; size: number; points: Point[]; }
 
-// --- Sample images (Unsplash) ---
-const IMAGES = [
-  { id: "1506905925346-21bda4d32df4", alt: "Mountain landscape at golden hour" },
-  { id: "1543946207-f89c999e9e49", alt: "Busy urban street intersection" },
-  { id: "1441986300917-64674bd600d8", alt: "Store display with products" },
-  { id: "1495020689067-958852172e08", alt: "Food spread on a table" },
-  { id: "1516912481808-3406841bd33c", alt: "Person reading in a library" },
-];
+interface ImageItem { id: string; url: string; alt: string | null; }
 
-const TOTAL = IMAGES.length;
-
-function imageUrl(id: string, w = 1200, h = 800) {
-  return `https://images.unsplash.com/photo-${id}?w=${w}&h=${h}&fit=crop&auto=format`;
+// Mezcla el orden de las imágenes (Fisher-Yates) -- se usa una sola
+// vez por sesión, cuando llegan del backend, para que cada
+// participante las vea en un orden distinto.
+function shuffle<T>(arr: T[]): T[] {
+  const result = [...arr];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
 }
 
 // --- Icons ---
@@ -54,7 +53,7 @@ const TrashIcon = () => (
 );
 
 // --- Welcome Screen ---
-function WelcomeScreen({ onStart }: { onStart: () => void }) {
+function WelcomeScreen({ onStart, total }: { onStart: () => void; total: number }) {
   return (
     <div className="min-h-full flex flex-col items-center justify-center px-6 py-16">
       <div className="w-full max-w-lg">
@@ -103,7 +102,7 @@ function WelcomeScreen({ onStart }: { onStart: () => void }) {
             className="text-xs font-medium shrink-0"
             style={{ fontFamily: "'DM Mono', monospace", color: "var(--muted-foreground)" }}
           >
-            {TOTAL} imágenes en total
+            {total} imágenes en total
           </span>
         </div>
 
@@ -133,23 +132,54 @@ function WelcomeScreen({ onStart }: { onStart: () => void }) {
 
 // --- Annotation Canvas ---
 function AnnotationCanvas({
-  imageIndex,
+  image,
   strokes,
   setStrokes,
   tool,
   brushSize,
+  onSizeChange,
+  onSkip,
 }: {
-  imageIndex: number;
+  image: ImageItem;
   strokes: Stroke[];
   setStrokes: (s: Stroke[]) => void;
   tool: Tool;
   brushSize: number;
+  onSizeChange?: (size: { width: number; height: number }) => void;
+  onSkip: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const drawing = useRef(false);
   const currentStroke = useRef<Stroke | null>(null);
-  const img = IMAGES[imageIndex];
+
+  // En vez de un efecto que "reinicia" el estado de carga (eso corre
+  // en paralelo con el evento onLoad y puede perder la carrera si la
+  // imagen ya estaba en caché por el prefetch), derivamos el estado
+  // comparando la URL que ya terminó de cargar contra la que se está
+  // mostrando ahora. Así nunca queda una carrera de por medio.
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [erroredUrl, setErroredUrl] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const imgLoaded = loadedUrl === image.url;
+  const imgError = erroredUrl === image.url;
+
+  // Si el usuario le da "Reintentar", agregamos un parámetro que
+  // cambia en cada intento -- así el navegador hace una petición
+  // realmente nueva en vez de asumir que la URL ya falló antes.
+  useEffect(() => {
+    setRetryNonce(0);
+  }, [image.id]);
+
+  const attemptSrc =
+    retryNonce > 0
+      ? `${image.url}${image.url.includes("?") ? "&" : "?"}_retry=${retryNonce}`
+      : image.url;
+
+  const handleRetry = () => {
+    setErroredUrl(null);
+    setRetryNonce((n) => n + 1);
+  };
 
   const redraw = useCallback((strokesToRender: Stroke[], canvas: HTMLCanvasElement) => {
     const ctx = canvas.getContext("2d");
@@ -184,8 +214,9 @@ function AnnotationCanvas({
     if (!canvas || !container) return;
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
+    onSizeChange?.({ width: canvas.width, height: canvas.height });
     redraw(strokes, canvas);
-  }, [imageIndex, strokes, redraw]);
+  }, [image.id, strokes, redraw, onSizeChange]);
 
   const getPos = (e: React.MouseEvent | React.TouchEvent): Point => {
     const canvas = canvasRef.current!;
@@ -200,6 +231,7 @@ function AnnotationCanvas({
   };
 
   const startDraw = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!imgLoaded || imgError) return;
     e.preventDefault();
     drawing.current = true;
     currentStroke.current = { tool, size: brushSize, points: [getPos(e)] };
@@ -249,15 +281,53 @@ function AnnotationCanvas({
     <div
       ref={containerRef}
       className="relative w-full h-full"
-      style={{ cursor: tool === "eraser" ? "cell" : "crosshair" }}
+      style={{ cursor: !imgLoaded || imgError ? "default" : tool === "eraser" ? "cell" : "crosshair" }}
     >
       <img
-        src={imageUrl(img.id)}
-        alt={img.alt}
+        src={attemptSrc}
+        alt={image.alt ?? ""}
         className="absolute inset-0 w-full h-full object-contain"
         draggable={false}
-        style={{ background: "var(--muted)" }}
+        style={{ background: "var(--muted)", opacity: imgLoaded ? 1 : 0, transition: "opacity 150ms" }}
+        // @ts-expect-error -- fetchPriority es válido en el DOM aunque
+        // el tipo de React todavía no lo reconozca en esta versión
+        fetchPriority="high"
+        decoding="async"
+        onLoad={() => setLoadedUrl(image.url)}
+        onError={() => setErroredUrl(image.url)}
       />
+      {!imgLoaded && !imgError && (
+        <div
+          className="absolute inset-0 flex items-center justify-center text-xs"
+          style={{ color: "var(--muted-foreground)" }}
+        >
+          Cargando imagen…
+        </div>
+      )}
+      {imgError && (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-xs text-center px-6"
+          style={{ color: "var(--muted-foreground)" }}
+        >
+          <span>No se pudo cargar esta imagen.</span>
+          <div className="flex gap-2">
+            <button
+              onClick={handleRetry}
+              className="px-4 py-1.5 text-xs font-medium rounded-sm"
+              style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+            >
+              Reintentar
+            </button>
+            <button
+              onClick={onSkip}
+              className="px-4 py-1.5 text-xs font-medium rounded-sm"
+              style={{ border: "1px solid var(--border)", color: "var(--foreground)", background: "var(--card)" }}
+            >
+              Saltar esta imagen
+            </button>
+          </div>
+        </div>
+      )}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
@@ -268,7 +338,7 @@ function AnnotationCanvas({
         onTouchStart={startDraw}
         onTouchMove={continueDraw}
         onTouchEnd={endDraw}
-        style={{ touchAction: "none" }}
+        style={{ touchAction: "none", pointerEvents: !imgLoaded || imgError ? "none" : "auto" }}
       />
     </div>
   );
@@ -278,28 +348,98 @@ function AnnotationCanvas({
 function AnnotationScreen({
   imageIndex,
   onNext,
+  participantId,
+  images,
+  total,
 }: {
   imageIndex: number;
   onNext: () => void;
+  participantId: string;
+  images: ImageItem[];
+  total: number;
 }) {
+  const currentImage = images[imageIndex];
+
+  // Precarga la(s) siguiente(s) imagen(es) en segundo plano mientras
+  // el participante todavía está dibujando en la actual. Cuando pulse
+  // "Siguiente", el navegador ya la tiene en caché y aparece al
+  // instante en vez de esperar la descarga.
+  useEffect(() => {
+    const next = images[imageIndex + 1];
+    const nextNext = images[imageIndex + 2];
+    [next, nextNext].forEach((item) => {
+      if (item) {
+        const preloadImg = new Image();
+        preloadImg.src = item.url;
+      }
+    });
+  }, [imageIndex, images]);
   const [tool, setTool] = useState<Tool>("brush");
   const [brushSize, setBrushSize] = useState(28);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const canvasSizeRef = useRef({ width: 1, height: 1 });
   const hasStrokes = strokes.length > 0;
 
   const undo = () => setStrokes((s) => s.slice(0, -1));
   const clear = () => setStrokes([]);
 
-  const handleNext = () => {
+  // Para cuando una imagen nunca llega a cargar: avanza sin pasar por
+  // el guardado (no hay ningún trazo real que guardar, y forzar un
+  // POST vacío no aportaría nada) para que nadie quede bloqueado.
+  const handleSkip = () => {
+    console.warn(`Imagen saltada por error de carga: ${currentImage.id}`);
     setStrokes([]);
     setTool("brush");
     onNext();
   };
 
-  const progress = ((imageIndex + 1) / TOTAL) * 100;
+  const handleNext = async () => {
+    const { width, height } = canvasSizeRef.current;
+
+    // Convertimos cada punto de píxeles del lienzo a una fracción de
+    // 0 a 1. Así, sin importar el tamaño de pantalla de cada
+    // participante, "x: 0.5, y: 0.3" siempre significa lo mismo sobre
+    // la imagen -- necesario para que el mapa de calor sea comparable
+    // entre dispositivos distintos.
+    const normalizedStrokes = strokes.map((s) => ({
+      tool: s.tool,
+      size: s.size / width,
+      points: s.points.map((p) => ({ x: p.x / width, y: p.y / height })),
+    }));
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      const res = await fetch("/.netlify/functions/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          participantId,
+          imageId: currentImage.id,
+          strokes: normalizedStrokes,
+        }),
+      });
+
+      if (!res.ok) throw new Error("La función respondió con error");
+
+      setStrokes([]);
+      setTool("brush");
+      onNext();
+    } catch (err) {
+      console.error("No se pudo guardar la anotación:", err);
+      setSaveError("No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const progress = ((imageIndex + 1) / total) * 100;
 
   return (
-    <div className="min-h-full flex flex-col" style={{ background: "var(--background)" }}>
+    <div className="h-full flex flex-col" style={{ background: "var(--background)" }}>
       {/* Top bar */}
       <div
         className="flex items-center justify-between px-5 py-3 shrink-0"
@@ -311,7 +451,7 @@ function AnnotationScreen({
             className="text-xs font-medium"
             style={{ fontFamily: "'DM Mono', monospace", color: "var(--muted-foreground)" }}
           >
-            Imagen {imageIndex + 1} de {TOTAL}
+            Imagen {imageIndex + 1} de {total}
           </span>
           <div
             className="w-32 h-0.5 rounded-full hidden sm:block"
@@ -401,16 +541,28 @@ function AnnotationScreen({
           {/* Next */}
           <button
             onClick={handleNext}
-            disabled={!hasStrokes}
+            disabled={!hasStrokes || isSaving}
             className="ml-3 px-5 py-2 text-sm font-medium transition-opacity duration-150 disabled:opacity-30 disabled:cursor-not-allowed rounded-sm"
             style={{
               background: "var(--primary)",
               color: "var(--primary-foreground)",
             }}
           >
-            {imageIndex + 1 < TOTAL ? "Siguiente →" : "Finalizar"}
+            {isSaving
+              ? "Guardando..."
+              : imageIndex + 1 < total
+                ? "Siguiente →"
+                : "Finalizar"}
           </button>
         </div>
+        {saveError && (
+          <div
+            className="text-center text-xs pb-2"
+            style={{ color: "var(--destructive, #c0392b)" }}
+          >
+            {saveError}
+          </div>
+        )}
       </div>
 
       {/* Canvas area */}
@@ -420,11 +572,13 @@ function AnnotationScreen({
           style={{ border: "1px solid var(--border)" }}
         >
           <AnnotationCanvas
-            imageIndex={imageIndex}
+            image={currentImage}
             strokes={strokes}
             setStrokes={setStrokes}
             tool={tool}
             brushSize={brushSize}
+            onSizeChange={(size) => (canvasSizeRef.current = size)}
+            onSkip={handleSkip}
           />
         </div>
       </div>
@@ -443,8 +597,8 @@ function AnnotationScreen({
 }
 
 // --- Transition Screen ---
-function TransitionScreen({ next, current }: { next: number; current: number }) {
-  const progress = (current / TOTAL) * 100;
+function TransitionScreen({ next, current, total }: { next: number; current: number; total: number }) {
+  const progress = (current / total) * 100;
   return (
     <div className="min-h-full flex flex-col items-center justify-center gap-6">
       <div className="w-48 flex flex-col items-center gap-3">
@@ -461,7 +615,7 @@ function TransitionScreen({ next, current }: { next: number; current: number }) 
           className="text-xs"
           style={{ fontFamily: "'DM Mono', monospace", color: "var(--muted-foreground)" }}
         >
-          {current} / {TOTAL} completadas
+          {current} / {total} completadas
         </span>
       </div>
       <p className="text-sm" style={{ color: "var(--muted-foreground)", fontWeight: 300 }}>
@@ -472,7 +626,7 @@ function TransitionScreen({ next, current }: { next: number; current: number }) 
 }
 
 // --- Complete Screen ---
-function CompleteScreen({ onRestart }: { onRestart: () => void }) {
+function CompleteScreen({ onRestart, total }: { onRestart: () => void; total: number }) {
   return (
     <div className="min-h-full flex flex-col items-center justify-center px-6 py-16">
       <div className="w-full max-w-sm text-center">
@@ -496,7 +650,7 @@ function CompleteScreen({ onRestart }: { onRestart: () => void }) {
           className="text-base leading-relaxed mb-2"
           style={{ color: "var(--muted-foreground)", fontWeight: 300 }}
         >
-          Has completado las {TOTAL} imágenes del estudio. Tu contribución es valiosa para nuestra investigación.
+          Has completado las {total} imágenes del estudio. Tu contribución es valiosa para nuestra investigación.
         </p>
         <p
           className="text-base leading-relaxed mb-10"
@@ -515,7 +669,7 @@ function CompleteScreen({ onRestart }: { onRestart: () => void }) {
                 className="text-2xl font-light"
                 style={{ letterSpacing: "-0.02em" }}
               >
-                {TOTAL}
+                {total}
               </p>
               <p className="text-xs mt-1" style={{ color: "var(--muted-foreground)" }}>
                 imágenes anotadas
@@ -552,10 +706,64 @@ function CompleteScreen({ onRestart }: { onRestart: () => void }) {
   );
 }
 
+// --- Loading / Error screens ---
+function LoadingScreen() {
+  return (
+    <div className="min-h-full flex flex-col items-center justify-center gap-3">
+      <p className="text-sm" style={{ color: "var(--muted-foreground)", fontWeight: 300 }}>
+        Cargando imágenes…
+      </p>
+    </div>
+  );
+}
+
+function ErrorScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="min-h-full flex flex-col items-center justify-center gap-4 px-6 text-center">
+      <p className="text-sm" style={{ color: "var(--muted-foreground)", fontWeight: 300 }}>
+        No se pudieron cargar las imágenes del estudio. Revisa tu conexión e inténtalo de nuevo.
+      </p>
+      <button
+        onClick={onRetry}
+        className="px-5 py-2 text-sm font-medium rounded-sm"
+        style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
+      >
+        Reintentar
+      </button>
+    </div>
+  );
+}
+
 // --- Root App ---
 export default function App() {
   const [screen, setScreen] = useState<Screen>("welcome");
   const [imageIndex, setImageIndex] = useState(0);
+  const [participantId] = useState(() => crypto.randomUUID());
+  const [images, setImages] = useState<ImageItem[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  const loadImages = useCallback(async () => {
+    setLoadError(false);
+    setImages(null);
+    try {
+      const res = await fetch("/.netlify/functions/images");
+      if (!res.ok) throw new Error("La función respondió con error");
+      const data = await res.json();
+      // Se mezcla una sola vez aquí, al cargar -- cada participante ve
+      // sus ~N imágenes en un orden distinto, sin importar cuántas
+      // (N) le suministres al estudio más adelante.
+      setImages(shuffle(data.images as ImageItem[]));
+    } catch (err) {
+      console.error("No se pudieron cargar las imágenes:", err);
+      setLoadError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadImages();
+  }, [loadImages]);
+
+  const total = images?.length ?? 0;
 
   const handleStart = () => {
     setImageIndex(0);
@@ -564,7 +772,7 @@ export default function App() {
 
   const handleNext = () => {
     const next = imageIndex + 1;
-    if (next >= TOTAL) {
+    if (next >= total) {
       setScreen("complete");
     } else {
       setScreen("transition");
@@ -580,16 +788,38 @@ export default function App() {
     setScreen("welcome");
   };
 
+  if (loadError) {
+    return (
+      <div className="size-full">
+        <ErrorScreen onRetry={loadImages} />
+      </div>
+    );
+  }
+
+  if (!images) {
+    return (
+      <div className="size-full">
+        <LoadingScreen />
+      </div>
+    );
+  }
+
   return (
     <div className="size-full">
-      {screen === "welcome" && <WelcomeScreen onStart={handleStart} />}
+      {screen === "welcome" && <WelcomeScreen onStart={handleStart} total={total} />}
       {screen === "annotation" && (
-        <AnnotationScreen imageIndex={imageIndex} onNext={handleNext} />
+        <AnnotationScreen
+          imageIndex={imageIndex}
+          onNext={handleNext}
+          participantId={participantId}
+          images={images}
+          total={total}
+        />
       )}
       {screen === "transition" && (
-        <TransitionScreen current={imageIndex + 1} next={imageIndex + 2} />
+        <TransitionScreen current={imageIndex + 1} next={imageIndex + 2} total={total} />
       )}
-      {screen === "complete" && <CompleteScreen onRestart={handleRestart} />}
+      {screen === "complete" && <CompleteScreen onRestart={handleRestart} total={total} />}
     </div>
   );
 }
