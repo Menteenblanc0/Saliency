@@ -21,3 +21,6 @@ logs/
 
 # Local Netlify folder
 .netlify
+.venv/
+__pycache__/
+*.py[cod]
