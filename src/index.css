@@ -73,3 +73,11 @@ html, body, #root {
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Pantalla amplia Y alta (escritorio, tableta): ahí caben a la vez todos
+   los textos largos. En teléfonos (incluso en horizontal) se pliegan. */
+@custom-variant roomy {
+  @media (min-width: 768px) and (min-height: 601px) {
+    @slot;
+  }
+}

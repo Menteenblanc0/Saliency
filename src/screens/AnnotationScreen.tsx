@@ -1,128 +1,82 @@
 import { useState, useRef, useEffect } from "react";
 import type { ImageItem, Stroke, Tool } from "../lib/types";
+import { normalizeStrokes } from "../lib/strokes";
 import { content } from "../content";
-import { postAnnotation } from "../lib/api";
 import { AnnotationCanvas } from "../components/AnnotationCanvas";
-import { BrushIcon, EraserIcon, UndoIcon, TrashIcon } from "../components/Icons";
+import { BrushIcon, EraserIcon, UndoIcon, TrashIcon, InfoIcon } from "../components/Icons";
 
 export function AnnotationScreen({
   imageIndex,
-  onNext,
-  participantId,
+  onDone,
+  onSkip,
   images,
   total,
 }: {
   imageIndex: number;
-  onNext: () => void;
-  participantId: string;
+  // Entrega los trazos ya normalizados; el guardado ocurre en la pantalla de calificación.
+  onDone: (strokes: Stroke[]) => void;
+  onSkip: () => void;
   images: ImageItem[];
   total: number;
 }) {
   const currentImage = images[imageIndex];
-
-  // Precarga la(s) siguiente(s) imagen(es) en segundo plano mientras
-  // el participante todavía está dibujando en la actual. Cuando pulse
-  // "Siguiente", el navegador ya la tiene en caché y aparece al
-  // instante en vez de esperar la descarga.
-  useEffect(() => {
-    const next = images[imageIndex + 1];
-    const nextNext = images[imageIndex + 2];
-    [next, nextNext].forEach((item) => {
-      if (item) {
-        const preloadImg = new Image();
-        preloadImg.src = item.url;
-      }
-    });
-  }, [imageIndex, images]);
   const [tool, setTool] = useState<Tool>("brush");
   const [brushSize, setBrushSize] = useState(28);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [showInstructions, setShowInstructions] = useState(false);
   const canvasSizeRef = useRef({ width: 1, height: 1 });
-  const hasStrokes = strokes.length > 0;
 
-  const undo = () => setStrokes((s) => s.slice(0, -1));
+  // Precarga de la siguiente imagen para que la transición sea instantánea.
+  useEffect(() => {
+    const next = images[imageIndex + 1];
+    if (next) {
+      const img = new Image();
+      img.src = next.url;
+    }
+  }, [imageIndex, images]);
+
+  const hasStrokes = strokes.length > 0;
+  // El servidor exige al menos un trazo de pincel: un trazo solo de borrador no basta.
+  const hasBrush = strokes.some((s) => s.tool === "brush");
+
+  const undo = () => setStrokes((prev) => prev.slice(0, -1));
   const clear = () => setStrokes([]);
 
-  // Para cuando una imagen nunca llega a cargar: avanza sin pasar por
-  // el guardado (no hay ningún trazo real que guardar, y forzar un
-  // POST vacío no aportaría nada) para que nadie quede bloqueado.
-  const handleSkip = () => {
-    console.warn(`Imagen saltada por error de carga: ${currentImage.id}`);
-    setStrokes([]);
-    setTool("brush");
-    onNext();
+  const handleNext = () => {
+    const { width, height } = canvasSizeRef.current;
+    onDone(normalizeStrokes(strokes, width, height));
   };
 
-  const handleNext = async () => {
-    const { width, height } = canvasSizeRef.current;
-
-    // Convertimos cada punto de píxeles del lienzo a una fracción de
-    // 0 a 1. Así, sin importar el tamaño de pantalla de cada
-    // participante, "x: 0.5, y: 0.3" siempre significa lo mismo sobre
-    // la imagen -- necesario para que el mapa de calor sea comparable
-    // entre dispositivos distintos.
-    const normalizedStrokes = strokes.map((s) => ({
-      tool: s.tool,
-      size: s.size / width,
-      points: s.points.map((p) => ({ x: p.x / width, y: p.y / height })),
-    }));
-
-    setIsSaving(true);
-    setSaveError(null);
-
-    try {
-      await postAnnotation({
-        participantId,
-        imageId: currentImage.id,
-        strokes: normalizedStrokes,
-      });
-
-      setStrokes([]);
-      setTool("brush");
-      onNext();
-    } catch (err) {
-      console.error("No se pudo guardar la anotación:", err);
-      setSaveError(content.annotation.saveError);
-    } finally {
-      setIsSaving(false);
-    }
+  const handleSkip = () => {
+    console.warn("Imagen omitida por error de carga:", currentImage.id);
+    onSkip();
   };
 
   const progress = ((imageIndex + 1) / total) * 100;
 
-  const nextLabel = isSaving
-    ? content.annotation.saving
-    : imageIndex + 1 < total
-      ? content.annotation.next
-      : content.annotation.finish;
-
-  // Un solo mensaje de estado (error de guardado o pista). Siempre ocupa
-  // la misma altura (dos líneas en teléfono vertical, para que quepa el
-  // error): si cambiara, el lienzo cambiaría de tamaño en pleno dibujo y
-  // desplazaría los trazos ya hechos.
+  // Siempre ocupa la misma altura: si apareciera o desapareciera, el lienzo
+  // cambiaría de tamaño en pleno dibujo y desplazaría los trazos ya hechos.
   const statusLine = (
     <div
       role="status"
-      className="h-8 leading-4 wide:h-5 wide:leading-5 flex items-center justify-center text-center text-xs"
-      style={{ color: saveError ? "var(--destructive, #c0392b)" : "var(--muted-foreground)" }}
+      className="h-5 leading-5 flex items-center justify-center text-xs"
+      style={{ color: "var(--muted-foreground)" }}
     >
-      {saveError ?? (!hasStrokes ? content.annotation.hint : "\u00A0")}
+      {!hasBrush ? content.annotation.hint : "\u00A0"}
     </div>
   );
 
   const nextButton = (className: string) => (
     <button
       onClick={handleNext}
-      disabled={!hasStrokes || isSaving}
+      disabled={!hasBrush}
       className={`font-medium transition-opacity duration-150 disabled:opacity-30 disabled:cursor-not-allowed rounded-sm ${className}`}
       style={{
         background: "var(--primary)",
         color: "var(--primary-foreground)",
       }}
     >
-      {nextLabel}
+      {content.annotation.next}
     </button>
   );
 
@@ -133,7 +87,7 @@ export function AnnotationScreen({
         className="flex flex-col gap-2 px-5 py-3 shrink-0 wide:flex-row wide:items-center wide:justify-between"
         style={{ borderBottom: "1px solid var(--border)", background: "var(--card)" }}
       >
-        {/* Progress */}
+        {/* Progress + instrucciones */}
         <div className="flex items-center gap-4">
           <span
             className="text-xs font-medium shrink-0"
@@ -150,6 +104,20 @@ export function AnnotationScreen({
               style={{ width: `${progress}%`, background: "var(--accent)" }}
             />
           </div>
+          <button
+            onClick={() => setShowInstructions((v) => !v)}
+            aria-expanded={showInstructions}
+            aria-controls="instrucciones"
+            className="flex items-center gap-1.5 py-1 text-xs font-medium shrink-0"
+            style={{ color: "var(--accent)" }}
+          >
+            <InfoIcon />
+            <span className="wide:max-md:hidden">
+              {showInstructions
+                ? content.annotation.hideInstructions
+                : content.annotation.showInstructions}
+            </span>
+          </button>
         </div>
 
         {/* Toolbar */}
@@ -165,6 +133,7 @@ export function AnnotationScreen({
               max={60}
               value={brushSize}
               onChange={(e) => setBrushSize(Number(e.target.value))}
+              aria-label={content.annotation.size}
               className="flex-1 min-w-0 wide:flex-none wide:w-20"
               style={{ accentColor: "var(--accent)" }}
             />
@@ -236,7 +205,7 @@ export function AnnotationScreen({
       {/* Canvas area */}
       <div className="flex-1 p-4 md:p-6 min-h-0">
         <div
-          className="h-full rounded-sm overflow-hidden"
+          className="h-full rounded-sm overflow-hidden relative"
           style={{ border: "1px solid var(--border)" }}
         >
           <AnnotationCanvas
@@ -248,10 +217,23 @@ export function AnnotationScreen({
             onSizeChange={(size) => (canvasSizeRef.current = size)}
             onSkip={handleSkip}
           />
+          {/* Recordatorio de instrucciones: se superpone al lienzo, sin
+              cambiar su tamaño (cambiarlo desplazaría los trazos hechos). */}
+          {showInstructions && (
+            <div
+              id="instrucciones"
+              className="absolute inset-x-0 top-0 max-h-full overflow-y-auto p-4 text-sm leading-relaxed space-y-2 z-10"
+              style={{ background: "var(--card)", borderBottom: "1px solid var(--border)" }}
+            >
+              {content.intro.instructions.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Estado (pista / error de guardado) en diseño ancho */}
+      {/* Pista en diseño ancho */}
       <div className="hidden wide:block px-4 pb-3 shrink-0">{statusLine}</div>
 
       {/* Barra inferior fija en teléfono vertical */}

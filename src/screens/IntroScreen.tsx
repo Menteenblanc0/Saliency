@@ -1,6 +1,6 @@
 import { content } from "../content";
 
-export function WelcomeScreen({ onStart, total }: { onStart: () => void; total: number }) {
+export function IntroScreen({ onStart, total }: { onStart: () => void; total: number }) {
   return (
     <div className="min-h-full flex flex-col items-center justify-center px-6 py-16">
       <div className="w-full max-w-lg">
@@ -10,7 +10,7 @@ export function WelcomeScreen({ onStart, total }: { onStart: () => void; total: 
             className="text-xs font-medium tracking-[0.15em] uppercase px-3 py-1.5 rounded-sm"
             style={{ background: "var(--muted)", color: "var(--muted-foreground)" }}
           >
-            {content.welcome.badge}
+            {content.intro.badge}
           </span>
         </div>
 
@@ -18,21 +18,20 @@ export function WelcomeScreen({ onStart, total }: { onStart: () => void; total: 
           className="text-4xl font-light leading-tight mb-6"
           style={{ letterSpacing: "-0.02em" }}
         >
-          {content.welcome.title}
+          {content.intro.title}
         </h1>
 
-        <p
-          className="text-base leading-relaxed mb-3"
-          style={{ color: "var(--muted-foreground)", fontWeight: 300 }}
-        >
-          {content.welcome.intro1}
-        </p>
-        <p
-          className="text-base leading-relaxed mb-12"
-          style={{ color: "var(--muted-foreground)", fontWeight: 300 }}
-        >
-          {content.welcome.intro2}
-        </p>
+        <div className="mb-12 space-y-3">
+          {content.intro.instructions.map((paragraph) => (
+            <p
+              key={paragraph}
+              className="text-base leading-relaxed"
+              style={{ color: "var(--foreground)", fontWeight: 300 }}
+            >
+              {paragraph}
+            </p>
+          ))}
+        </div>
 
         {/* Progress info */}
         <div
@@ -49,7 +48,7 @@ export function WelcomeScreen({ onStart, total }: { onStart: () => void; total: 
             className="text-xs font-medium shrink-0"
             style={{ fontFamily: "'DM Mono', monospace", color: "var(--muted-foreground)" }}
           >
-            {content.welcome.totalLabel(total)}
+            {content.intro.totalLabel(total)}
           </span>
         </div>
 
@@ -63,14 +62,14 @@ export function WelcomeScreen({ onStart, total }: { onStart: () => void; total: 
             letterSpacing: "0.05em",
           }}
         >
-          {content.welcome.start}
+          {content.intro.start}
         </button>
 
         <p
           className="text-xs text-center mt-4"
           style={{ color: "var(--muted-foreground)" }}
         >
-          {content.welcome.footer}
+          {content.intro.footer}
         </p>
       </div>
     </div>

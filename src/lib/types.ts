@@ -1,4 +1,5 @@
-export type Screen = "welcome" | "annotation" | "transition" | "complete";
+export type Screen = "intro" | "annotation" | "rating" | "transition" | "comment" | "complete";
+export type DesignAnswer = "si" | "no" | "no_determina";
 export type Tool = "brush" | "eraser";
 
 export interface Point {
