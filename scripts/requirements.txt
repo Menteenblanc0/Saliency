@@ -1,6 +1,6 @@
 supabase
 pillow
 numpy
-matplotlib
 requests
 python-dotenv
+matplotlib  # solo para generar_mapas_calor.py --overlay

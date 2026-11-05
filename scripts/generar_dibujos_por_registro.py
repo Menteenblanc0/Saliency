@@ -26,8 +26,10 @@ import os
 import numpy as np
 import requests
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 from supabase import create_client
+
+from supabase_utils import iterar_paginas, traer_todo
 
 load_dotenv()
 
@@ -39,12 +41,15 @@ BRUSH_COLOR = (61, 107, 142, 140)  # mismo color/opacidad que usa el lienzo en e
 
 
 def obtener_datos(supabase):
-    imagenes = supabase.table("images").select("id, url, alt").execute().data
+    imagenes = traer_todo(supabase, "images", "id, url, alt")
+    # Generador: trae las anotaciones por páginas de 1000 (Supabase trunca
+    # en silencio lo que pase de ese tope) sin cargar toda la tabla en memoria.
     anotaciones = (
-        supabase.table("annotations")
-        .select("id, image_id, participant_id, strokes, created_at")
-        .execute()
-        .data
+        fila
+        for pagina in iterar_paginas(
+            supabase, "annotations", "id, image_id, participant_id, strokes, created_at"
+        )
+        for fila in pagina
     )
     imagenes_por_id = {img["id"]: img for img in imagenes}
     return imagenes_por_id, anotaciones
@@ -53,7 +58,8 @@ def obtener_datos(supabase):
 def descargar_imagen(url):
     resp = requests.get(url, timeout=20)
     resp.raise_for_status()
-    return Image.open(io.BytesIO(resp.content)).convert("RGB")
+    imagen = Image.open(io.BytesIO(resp.content))
+    return ImageOps.exif_transpose(imagen).convert("RGB")  # orientación EXIF, como el navegador
 
 
 def dibujar_strokes(overlay, strokes, ancho, alto):
