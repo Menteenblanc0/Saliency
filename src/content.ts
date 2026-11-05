@@ -12,6 +12,9 @@ export const content = {
     ],
     totalLabel: (n: number) => `${n} imágenes en total`,
     start: "Comenzar",
+    continue: (i: number, n: number) => `Continuar (imagen ${i} de ${n})`,
+    restart: "Empezar de nuevo",
+    restartConfirm: "¿Desea empezar de nuevo? Volverá a la primera imagen.",
     footer: "Participación anónima · Datos usados solo con fines de investigación",
   },
   annotation: {
@@ -77,7 +80,6 @@ export const content = {
     body2: "Los datos han sido registrados de forma anónima.",
     annotatedLabel: "imágenes anotadas",
     doneLabel: "completado",
-    restart: "Volver al inicio",
   },
   status: {
     loading: "Cargando imágenes…",

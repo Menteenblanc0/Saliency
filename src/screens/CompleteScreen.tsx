@@ -1,6 +1,6 @@
 import { content } from "../content";
 
-export function CompleteScreen({ onRestart, total }: { onRestart: () => void; total: number }) {
+export function CompleteScreen({ total }: { total: number }) {
   return (
     <div className="min-h-full flex flex-col items-center justify-center px-6 py-16">
       <div className="w-full max-w-sm text-center">
@@ -34,7 +34,7 @@ export function CompleteScreen({ onRestart, total }: { onRestart: () => void; to
         </p>
 
         <div
-          className="py-5 mb-10"
+          className="py-5"
           style={{ borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}
         >
           <div className="flex justify-center gap-10">
@@ -62,19 +62,6 @@ export function CompleteScreen({ onRestart, total }: { onRestart: () => void; to
             </div>
           </div>
         </div>
-
-        <button
-          onClick={onRestart}
-          className="w-full py-3.5 text-sm font-medium transition-opacity duration-150 hover:opacity-70 rounded-sm"
-          style={{
-            border: "1px solid var(--border)",
-            color: "var(--foreground)",
-            background: "var(--card)",
-            letterSpacing: "0.03em",
-          }}
-        >
-          {content.complete.restart}
-        </button>
       </div>
     </div>
   );
