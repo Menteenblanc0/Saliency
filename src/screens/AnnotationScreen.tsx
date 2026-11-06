@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import type { ImageItem, Stroke, Tool } from "../lib/types";
 import { normalizeStrokes } from "../lib/strokes";
 import { content } from "../content";
@@ -24,7 +24,6 @@ export function AnnotationScreen({
   const [brushSize, setBrushSize] = useState(28);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [showInstructions, setShowInstructions] = useState(false);
-  const canvasSizeRef = useRef({ width: 1, height: 1 });
 
   // Precarga de la siguiente imagen para que la transición sea instantánea.
   useEffect(() => {
@@ -43,8 +42,7 @@ export function AnnotationScreen({
   const clear = () => setStrokes([]);
 
   const handleNext = () => {
-    const { width, height } = canvasSizeRef.current;
-    onDone(normalizeStrokes(strokes, width, height));
+    onDone(normalizeStrokes(strokes));
   };
 
   const handleSkip = () => {
@@ -70,7 +68,7 @@ export function AnnotationScreen({
     <button
       onClick={handleNext}
       disabled={!hasBrush}
-      className={`font-medium transition-opacity duration-150 disabled:opacity-30 disabled:cursor-not-allowed rounded-sm ${className}`}
+      className={`font-medium whitespace-nowrap shrink-0 transition-opacity duration-150 disabled:opacity-30 disabled:cursor-not-allowed rounded-sm ${className}`}
       style={{
         background: "var(--primary)",
         color: "var(--primary-foreground)",
@@ -96,7 +94,7 @@ export function AnnotationScreen({
             {content.annotation.imageOf(imageIndex + 1, total)}
           </span>
           <div
-            className="flex-1 h-0.5 rounded-full wide:max-md:hidden md:flex-none md:w-32"
+            className="flex-1 h-0.5 rounded-full wide:max-lg:hidden lg:flex-none lg:w-32"
             style={{ background: "var(--border)" }}
           >
             <div
@@ -124,7 +122,7 @@ export function AnnotationScreen({
         <div className="flex items-center gap-1">
           {/* Brush size */}
           <div className="flex items-center gap-2 mr-2 flex-1 min-w-0 wide:flex-none wide:mr-3">
-            <span className="text-xs hidden wide:inline" style={{ color: "var(--muted-foreground)" }}>
+            <span className="text-xs hidden md:inline" style={{ color: "var(--muted-foreground)" }}>
               {content.annotation.size}
             </span>
             <input
@@ -214,7 +212,6 @@ export function AnnotationScreen({
             setStrokes={setStrokes}
             tool={tool}
             brushSize={brushSize}
-            onSizeChange={(size) => (canvasSizeRef.current = size)}
             onSkip={handleSkip}
           />
           {/* Recordatorio de instrucciones: se superpone al lienzo, sin

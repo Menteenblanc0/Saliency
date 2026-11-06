@@ -7,6 +7,9 @@ export interface Point {
   y: number;
 }
 
+// Coordenadas relativas a la imagen tal como se ve en pantalla (no al lienzo,
+// que puede tener franjas vacías): x e y van de 0 a 1 sobre el ancho y el alto
+// de la imagen, y size es el grosor como fracción del ancho de la imagen.
 export interface Stroke {
   tool: Tool;
   size: number;
