@@ -17,10 +17,24 @@ from supabase_utils import traer_todo
 
 
 # ---------- cliente falso de Supabase ----------
+class _Negacion:
+    def __init__(self, consulta):
+        self.consulta = consulta
+
+    def is_(self, columna, valor):  # solo se usa not_.is_(col, "null")
+        assert valor == "null"
+        self.consulta.no_nulos.append(columna)
+        return self.consulta
+
+
 class _Consulta:
     def __init__(self, tablas, nombre, tope):
         self.filas, self.tope, self.rango = tablas[nombre], tope, None
-        self.filtros = []
+        self.filtros, self.no_nulos = [], []
+
+    @property
+    def not_(self):
+        return _Negacion(self)
 
     def select(self, _columnas):
         return self
@@ -37,7 +51,10 @@ class _Consulta:
         return self
 
     def execute(self):
-        filas = [f for f in self.filas if all(f.get(c) == v for c, v in self.filtros)]
+        filas = [
+            f for f in self.filas
+            if all(f.get(c) == v for c, v in self.filtros) and all(f.get(c) is not None for c in self.no_nulos)
+        ]
         a, b = self.rango
         filas = filas[a : b + 1][: self.tope]  # el servidor también aplica su tope
         return type("R", (), {"data": filas})()
