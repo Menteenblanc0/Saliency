@@ -11,9 +11,9 @@
 export const PRIVACY = {
   version: "2026-11-v1",
   responsable:
-    "[COMPLETAR: nombre del responsable del tratamiento, por ejemplo la universidad o el grupo de investigación]",
+    "Christopher Alexandro Morán Rodríguez",
   contacto:
-    "[COMPLETAR: correo de contacto para consultas, reclamos y solicitudes de los participantes]",
+    "cmoran@universidad.edu.co",
 } as const;
 
 export const privacyIsComplete = (): boolean =>
