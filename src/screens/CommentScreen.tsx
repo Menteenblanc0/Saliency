@@ -6,28 +6,46 @@ const MAX_LENGTH = 2000;
 
 export function CommentScreen({
   participantId,
-  onDone,
+  onFinish,
 }: {
   participantId: string;
-  onDone: () => void;
+  // Cierra la encuesta en el servidor (función `complete`); puede fallar.
+  onFinish: () => Promise<void>;
 }) {
   const [comment, setComment] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState(false);
+  const [finishError, setFinishError] = useState(false);
   const trimmed = comment.trim();
+
+  // Cierra la encuesta. Si falla, se puede reintentar (enviar el comentario
+  // de nuevo es inofensivo: el servidor ignora el duplicado).
+  const finish = async () => {
+    setIsSending(true);
+    setFinishError(false);
+    try {
+      await onFinish();
+    } catch (err) {
+      console.error("Error al finalizar:", err);
+      setFinishError(true);
+      setIsSending(false);
+    }
+  };
 
   const send = async () => {
     if (!trimmed || isSending) return;
     setIsSending(true);
     setSendError(false);
+    setFinishError(false);
     try {
       await postFeedback(participantId, trimmed);
-      onDone();
     } catch (err) {
       console.error("Error enviando comentario:", err);
       setSendError(true); // "Omitir" sigue disponible
       setIsSending(false);
+      return;
     }
+    await finish();
   };
 
   return (
@@ -57,9 +75,9 @@ export function CommentScreen({
           {comment.length} / {MAX_LENGTH}
         </div>
 
-        {sendError && (
+        {(sendError || finishError) && (
           <p role="alert" className="text-sm mb-4" style={{ color: "var(--destructive, #c0392b)" }}>
-            {content.comment.sendError}
+            {sendError ? content.comment.sendError : content.comment.finishError}
           </p>
         )}
 
@@ -73,8 +91,9 @@ export function CommentScreen({
             {isSending ? content.comment.sending : content.comment.send}
           </button>
           <button
-            onClick={onDone}
-            className="flex-1 py-3.5 text-sm font-medium rounded-sm"
+            onClick={finish}
+            disabled={isSending}
+            className="flex-1 py-3.5 text-sm font-medium rounded-sm disabled:opacity-30"
             style={{ border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }}
           >
             {content.comment.skip}

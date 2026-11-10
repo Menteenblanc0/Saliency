@@ -1,56 +1,35 @@
-import type { ImageItem } from "./types";
+// Lo único que se guarda en el navegador es el identificador del participante
+// (un UUID que entrega el servidor al ingresar el correo), para que recargar
+// la pestaña no vuelva a pedir el correo. Todo lo demás (orden de las
+// imágenes y progreso) vive en el servidor. Se limpia al pausar y al terminar.
+//
+// Usa sessionStorage (misma pestaña) y todo acceso va en try/catch: si el
+// almacenamiento no está disponible, la encuesta funciona igual, pero cada
+// recarga vuelve a pedir el correo.
 
-// Persistencia mínima para retomar la encuesta tras recargar o cerrar la
-// pestaña. Usa sessionStorage (misma pestaña y mismo dispositivo) y guarda
-// solo un UUID aleatorio, ids de imagen y el progreso: nada personal.
-// Todo acceso va en try/catch: si el almacenamiento no está disponible
-// (modo privado estricto, bloqueado por el navegador), la encuesta funciona
-// igual, simplemente sin poder retomarse.
-
-const KEY = "saliency:session:v1";
+const KEY = "saliency:session:v2";
+const LEGACY_KEY = "saliency:session:v1"; // versión anterior (orden e índice en el navegador)
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export interface SessionData {
-  participantId: string;
-  order: string[]; // ids de imagen en el orden mezclado de este participante
-  index: number; // siguiente imagen por anotar (0 = ninguna guardada aún)
-  introSeen: boolean; // ya pulsó "Comenzar"
-  completed: boolean; // ya terminó (incluido el paso del comentario)
-}
-
-function isValid(d: unknown): d is SessionData {
-  if (typeof d !== "object" || d === null) return false;
-  const s = d as Record<string, unknown>;
-  return (
-    typeof s.participantId === "string" &&
-    UUID_RE.test(s.participantId) &&
-    Array.isArray(s.order) &&
-    s.order.every((id) => typeof id === "string") &&
-    typeof s.index === "number" &&
-    Number.isInteger(s.index) &&
-    s.index >= 0 &&
-    s.index <= s.order.length &&
-    typeof s.introSeen === "boolean" &&
-    typeof s.completed === "boolean"
-  );
-}
-
-export function loadSession(): SessionData | null {
+export function loadParticipantId(): string | null {
   try {
+    sessionStorage.removeItem(LEGACY_KEY);
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const data: unknown = JSON.parse(raw);
-    return isValid(data) ? data : null; // datos corruptos o manipulados: se ignoran
+    if (typeof data !== "object" || data === null) return null;
+    const id = (data as Record<string, unknown>).participantId;
+    return typeof id === "string" && UUID_RE.test(id) ? id : null; // corrupto o manipulado: se ignora
   } catch {
     return null;
   }
 }
 
-export function saveSession(data: SessionData): void {
+export function saveParticipantId(participantId: string): void {
   try {
-    sessionStorage.setItem(KEY, JSON.stringify(data));
+    sessionStorage.setItem(KEY, JSON.stringify({ participantId }));
   } catch {
     // sin almacenamiento: la encuesta sigue funcionando sin persistencia
   }
@@ -59,38 +38,8 @@ export function saveSession(data: SessionData): void {
 export function clearSession(): void {
   try {
     sessionStorage.removeItem(KEY);
+    sessionStorage.removeItem(LEGACY_KEY);
   } catch {
     // ídem
   }
-}
-
-// Reordena las imágenes que devolvió el servidor según el orden guardado.
-// - Los ids guardados que ya no existen se descartan, y el índice se
-//   corrige para seguir apuntando a la misma imagen pendiente.
-// - Las imágenes nuevas (que no estaban en el orden guardado) van al final,
-//   en el orden en que llegan (el llamador las mezcla antes).
-export function applySession(
-  images: ImageItem[],
-  saved: SessionData,
-): { ordered: ImageItem[]; index: number } {
-  const byId = new Map(images.map((img) => [img.id, img]));
-  const ordered: ImageItem[] = [];
-  const used = new Set<string>();
-  let index = saved.index;
-
-  saved.order.forEach((id, position) => {
-    const img = byId.get(id);
-    if (img && !used.has(id)) {
-      ordered.push(img);
-      used.add(id);
-    } else if (position < saved.index) {
-      index -= 1; // una imagen anterior al progreso desapareció (o venía repetida)
-    }
-  });
-
-  for (const img of images) {
-    if (!used.has(img.id)) ordered.push(img);
-  }
-
-  return { ordered, index: Math.min(Math.max(index, 0), ordered.length) };
 }

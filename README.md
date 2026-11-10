@@ -6,8 +6,10 @@ una serie de imágenes publicitarias, una por una:
 1. **Marca con un pincel** las zonas que llaman su atención de forma espontánea.
 2. **Califica el diseño** de la imagen completa: *Sí*, *No* o *No puedo determinarlo*.
 
-Al final puede dejar un **comentario opcional**. Con esos datos se construyen
-mapas de grises de atención y puntajes de diseño por imagen.
+Cada persona ingresa con su **correo electrónico** (sin verificación), lo que le
+permite **pausar y continuar después** desde donde quedó. Al final puede dejar un
+**comentario opcional**. Con esos datos se construyen mapas de grises de atención
+y puntajes de diseño por imagen.
 
 ## 1. Arquitectura
 
@@ -39,16 +41,18 @@ src/
   lib/
     types.ts                 -- tipos (Stroke, ImageItem, Screen…)
     api.ts                   -- llamadas a las funciones de Netlify
-    session.ts               -- persistencia en sessionStorage (retomar tras recargar)
+    session.ts               -- sessionStorage: solo el participantId (recargar sin pedir el correo)
+    email.ts                 -- normalización y validación básica del correo
     strokes.ts               -- recorte y redondeo de los trazos antes de enviarlos
-    shuffle.ts               -- mezcla del orden de las imágenes
   components/
     AnnotationCanvas.tsx     -- lienzo de dibujo sobre la imagen
     Icons.tsx, StatusScreens.tsx
   screens/
-    IntroScreen.tsx          -- instrucciones y botón Comenzar / Continuar
+    IntroScreen.tsx          -- instrucciones, aviso de pausa y de tratamiento de datos
+    EmailScreen.tsx          -- correo (con confirmación) y resumen "Continúa en la imagen X de N"
     AnnotationScreen.tsx     -- dibujo (pincel, borrador, deshacer, instrucciones)
     RatingScreen.tsx         -- calificación del diseño (Sí / No / No puedo determinarlo)
+    PauseScreen.tsx          -- participación en pausa: avance y cómo volver
     TransitionScreen.tsx     -- pausa breve entre imágenes
     CommentScreen.tsx        -- comentario final opcional
     CompleteScreen.tsx       -- agradecimiento
@@ -71,22 +75,38 @@ scripts/
 
 ## 3. Flujo del participante
 
-1. **Intro**: instrucciones (Texto 1) y *Comenzar*. Si ya había avanzado en esta pestaña, ofrece *Continuar (imagen X de N)* y *Empezar de nuevo*.
-2. **Dibujo**: sobre cada imagen marca con el pincel lo que llama su atención. Puede borrar, deshacer o limpiar, y volver a leer las instrucciones con *Ver instrucciones*. *Siguiente* se habilita solo cuando hay al menos un trazo de pincel. Solo se puede dibujar sobre la imagen, no sobre las franjas vacías.
-3. **Calificación**: ve la imagen sin trazos, lee el Texto 2 y responde *Sí*, *No* o *No puedo determinarlo* (sin opción preseleccionada). Al pulsar *Continuar* se guarda **una sola vez** el dibujo y la respuesta. Si falla el guardado, se muestra el error y se puede reintentar sin perder nada.
-4. Repite 2–3 para cada imagen (si una imagen no carga, puede saltarla).
-5. **Comentario final** opcional (hasta 2000 caracteres) y **pantalla de agradecimiento**.
+1. **Intro**: instrucciones (Texto 1), aviso de que puede pausar y continuar con el mismo correo, aviso de tratamiento de datos y *Comenzar*.
+2. **Correo**: escribe su correo electrónico y lo confirma ("Se usará este correo: …"). Se normaliza (se recorta y pasa a minúsculas) y se valida su formato; **no se verifica** que exista. Si ya tenía avance, ve un resumen ("Continúa en la imagen X de N") antes de seguir.
+3. **Dibujo**: sobre cada imagen marca con el pincel lo que llama su atención. Puede borrar, deshacer o limpiar, y volver a leer las instrucciones con *Ver instrucciones*. *Siguiente* se habilita solo cuando hay al menos un trazo de pincel. Solo se puede dibujar sobre la imagen, no sobre las franjas vacías.
+4. **Calificación**: ve la imagen sin trazos, lee el Texto 2 y responde *Sí*, *No* o *No puedo determinarlo* (sin opción preseleccionada). Al pulsar *Continuar* se guarda **una sola vez** el dibujo y la respuesta. Si falla el guardado, se muestra el error y se puede reintentar sin perder nada.
+5. Repite 3–4 para cada imagen pendiente (si una imagen no carga, puede saltarla).
+6. **Comentario final** opcional (hasta 2000 caracteres). Al cerrarlo (enviado u omitido) la encuesta se marca como completada y aparece la **pantalla de agradecimiento**.
 
-### Persistencia (retomar tras recargar)
+### Identificación, orden y progreso
 
-Se guarda en `sessionStorage` (misma pestaña y mismo dispositivo) bajo la clave `saliency:session:v1`: un UUID aleatorio de participante, los ids de imagen en su orden mezclado, cuántas imágenes lleva guardadas y si terminó. No se guarda nada personal ni el dibujo en curso.
+- La persona se identifica **solo por correo**; no hay verificación, recordatorios ni inicio de sesión.
+- **El servidor decide y guarda el orden** de las imágenes la primera vez que entra el correo. El navegador no mezcla nada: ordena el catálogo con el `order` que recibe. Al volver, el servidor lo reconcilia con las imágenes activas (descarta las que ya no existen y agrega al final las nuevas).
+- **El progreso se deduce de las anotaciones guardadas**: la encuesta sigue en la primera imagen del orden que todavía no tiene anotación (`doneImageIds`). No hay un contador aparte. Si ya hizo todas pero no cerró, va al comentario; si ya cerró, ve la pantalla final.
 
-- Recargar a mitad de una imagen la repite; las ya guardadas no se repiten.
-- Si el catálogo cambia entre recargas, se descartan las imágenes que ya no existen y las nuevas van al final.
-- Al terminar, recargar muestra la pantalla de agradecimiento; no hay forma de repetir la encuesta con el mismo participante.
-- Una pestaña nueva empieza desde cero, como otro participante.
-- Si el navegador bloquea `sessionStorage`, la encuesta funciona igual, solo que sin poder retomarse.
-- Limitación conocida: "Duplicar pestaña" copia el `sessionStorage`; dos pestañas duplicadas compartirían participante y los guardados de la segunda se descartarían por duplicados.
+### Pausa
+
+Hay un botón **Pausar** en las pantallas de dibujo y de calificación. Si hay trazos o una calificación sin guardar, se pide confirmación avisando de que **esa imagen se repetirá** al volver (el dibujo en curso nunca se guarda). La pantalla de pausa muestra el avance (X de N) e indica volver a ingresar con el mismo correo; el progreso ya guardado queda en el servidor.
+
+### Qué se guarda en el navegador
+
+Solo el `participantId` (un UUID que entrega el servidor) en `sessionStorage`, clave `saliency:session:v2`. Sirve para que **recargar la pestaña no vuelva a pedir el correo**. Se borra al **pausar** y al **terminar**.
+
+- Una pestaña nueva (o cerrar y volver) pide el correo de nuevo y retoma desde el servidor.
+- Si el navegador bloquea `sessionStorage`, la encuesta funciona igual, pero cada recarga vuelve a pedir el correo.
+- Si el servidor no reconoce el `participantId` guardado, se descarta y se vuelve a la intro.
+
+### Contrato del frontend con el backend
+
+Todo lo que el frontend espera del servidor está en [`src/lib/api.ts`](src/lib/api.ts):
+
+- `POST /.netlify/functions/participants` con `{ email }` (ingreso) o `{ participantId }` (recarga) responde `{ participantId, order, doneImageIds, completed }`: `order` son los ids de todas las imágenes activas en el orden de ese participante, `doneImageIds` los ids que ya tienen anotación y `completed` si ya cerró la encuesta. Responde 400 si el correo es inválido y 404 si el `participantId` no existe.
+- `POST /.netlify/functions/complete` con `{ participantId }` marca la encuesta como completada.
+- `annotations` y `feedback` siguen igual y solo deberían aceptar participantes registrados.
 
 ### Dónde están los textos
 
@@ -263,7 +283,7 @@ Pruebas (no necesitan Supabase ni internet): `python test_mapas_grises.py` y `py
    ```
    Debe aparecer `design_answer = 1`, `idx_annotations_unique_submission`, `idx_feedback_participant` y `feedback`. Y la tabla `images` debe tener filas con `active = true`.
 2. **Desplegado en Netlify** y probado en la URL pública, en un **teléfono real** (vertical y horizontal), con las variables de entorno puestas.
-3. **Un participante de prueba** completa 3 o 4 imágenes, **recarga a la mitad y retoma**, termina y deja un comentario.
+3. **Un participante de prueba** entra con un correo, completa 3 o 4 imágenes, **recarga la pestaña** (no debe pedir el correo), **pausa, cierra el navegador por completo y vuelve a ingresar con el mismo correo** (debe continuar en la primera imagen pendiente, con el mismo orden), termina y deja un comentario.
 4. **Se confirman las filas en Supabase**:
    ```sql
    select image_id, design_answer, jsonb_array_length(strokes) as trazos from annotations order by created_at;
@@ -274,4 +294,4 @@ Pruebas (no necesitan Supabase ni internet): `python test_mapas_grises.py` y `py
    ```sql
    truncate table annotations, feedback;
    ```
-   Cierre también la pestaña de prueba (o abra una nueva): su `sessionStorage` conserva el progreso del participante de prueba.
+   Cierre también la pestaña de prueba: su `sessionStorage` conserva el `participantId` del participante de prueba, que dejaría de existir en la base.

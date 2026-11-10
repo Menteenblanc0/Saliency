@@ -27,11 +27,13 @@ export function RatingScreen({
   strokes,
   participantId,
   onSaved,
+  onPause,
 }: {
   image: ImageItem;
   strokes: Stroke[]; // ya normalizados
   participantId: string;
   onSaved: () => void;
+  onPause: () => void;
 }) {
   // Sin opción preseleccionada: el participante debe elegir.
   const [answer, setAnswer] = useState<DesignAnswer | null>(null);
@@ -58,6 +60,12 @@ export function RatingScreen({
     }
   };
 
+  // La calificación aún no se guardó: al volver, esta imagen se repite.
+  const handlePause = () => {
+    if (isSaving) return;
+    if (window.confirm(content.pause.confirmUnsaved)) onPause();
+  };
+
   return (
     <div className="h-full flex flex-col wide:flex-row" style={{ background: "var(--background)" }}>
       {/* Imagen limpia (sin trazos) */}
@@ -81,6 +89,16 @@ export function RatingScreen({
         style={{ background: "var(--card)" }}
       >
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 roomy:py-6">
+          <div className="flex justify-end -mt-1 mb-1">
+            <button
+              onClick={handlePause}
+              disabled={isSaving}
+              className="py-1 text-xs font-medium disabled:opacity-30"
+              style={{ color: "var(--muted-foreground)" }}
+            >
+              {content.pause.button}
+            </button>
+          </div>
           <h1
             className="text-xl roomy:text-2xl font-light leading-snug mb-3"
             style={{ letterSpacing: "-0.01em" }}

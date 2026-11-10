@@ -9,6 +9,7 @@ export function AnnotationScreen({
   imageIndex,
   onDone,
   onSkip,
+  onPause,
   images,
   total,
 }: {
@@ -16,6 +17,7 @@ export function AnnotationScreen({
   // Entrega los trazos ya normalizados; el guardado ocurre en la pantalla de calificación.
   onDone: (strokes: Stroke[]) => void;
   onSkip: () => void;
+  onPause: () => void;
   images: ImageItem[];
   total: number;
 }) {
@@ -43,6 +45,12 @@ export function AnnotationScreen({
 
   const handleNext = () => {
     onDone(normalizeStrokes(strokes));
+  };
+
+  // Pausar: si hay trazos sin guardar se avisa de que esa imagen se repetirá.
+  const handlePause = () => {
+    if (hasStrokes && !window.confirm(content.pause.confirmUnsaved)) return;
+    onPause();
   };
 
   const handleSkip = () => {
@@ -106,15 +114,32 @@ export function AnnotationScreen({
             onClick={() => setShowInstructions((v) => !v)}
             aria-expanded={showInstructions}
             aria-controls="instrucciones"
+            aria-label={
+              showInstructions
+                ? content.annotation.hideInstructions
+                : content.annotation.showInstructions
+            }
+            title={
+              showInstructions
+                ? content.annotation.hideInstructions
+                : content.annotation.showInstructions
+            }
             className="flex items-center gap-1.5 py-1 text-xs font-medium shrink-0"
             style={{ color: "var(--accent)" }}
           >
             <InfoIcon />
-            <span className="wide:max-md:hidden">
+            <span className="max-sm:hidden wide:max-md:hidden">
               {showInstructions
                 ? content.annotation.hideInstructions
                 : content.annotation.showInstructions}
             </span>
+          </button>
+          <button
+            onClick={handlePause}
+            className="py-1 text-xs font-medium shrink-0"
+            style={{ color: "var(--muted-foreground)" }}
+          >
+            {content.pause.button}
           </button>
         </div>
 

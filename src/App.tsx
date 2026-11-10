@@ -1,106 +1,159 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Screen, ImageItem, Stroke } from "./lib/types";
-import { shuffle } from "./lib/shuffle";
-import { fetchImages } from "./lib/api";
-import { loadSession, saveSession, clearSession, applySession } from "./lib/session";
+import {
+  fetchImages,
+  identifyParticipant,
+  postComplete,
+  ApiError,
+  type ParticipantState,
+} from "./lib/api";
+import { loadParticipantId, saveParticipantId, clearSession } from "./lib/session";
 import { LoadingScreen, ErrorScreen } from "./components/StatusScreens";
 import { IntroScreen } from "./screens/IntroScreen";
+import { EmailScreen, type IdentifyInfo } from "./screens/EmailScreen";
 import { AnnotationScreen } from "./screens/AnnotationScreen";
 import { RatingScreen } from "./screens/RatingScreen";
+import { PauseScreen } from "./screens/PauseScreen";
 import { TransitionScreen } from "./screens/TransitionScreen";
 import { CommentScreen } from "./screens/CommentScreen";
 import { CompleteScreen } from "./screens/CompleteScreen";
 
-// Guarda el progreso para poder retomar tras recargar. Solo guarda un UUID,
-// ids de imagen y el avance; el dibujo en curso nunca se persiste.
-function persist(images: ImageItem[], participantId: string, index: number, completed = false) {
-  saveSession({
-    participantId,
-    order: images.map((img) => img.id),
-    index,
-    introSeen: true,
-    completed,
-  });
+// Lo que el servidor sabe de este participante, combinado con el catálogo.
+interface Participant {
+  participantId: string;
+  ordered: ImageItem[]; // imágenes en el orden decidido por el servidor
+  done: Set<string>; // ids con anotación ya guardada
+  completed: boolean;
+}
+
+interface Target {
+  screen: "annotation" | "comment" | "complete";
+  index: number;
+}
+
+// Ordena el catálogo con el `order` del servidor. Se descartan los ids que ya no
+// están en el catálogo y las imágenes que el servidor aún no conoce van al final.
+function buildParticipant(catalog: ImageItem[], state: ParticipantState): Participant {
+  const byId = new Map(catalog.map((img) => [img.id, img]));
+  const ordered: ImageItem[] = [];
+  const used = new Set<string>();
+  for (const id of state.order) {
+    const img = byId.get(id);
+    if (img && !used.has(id)) {
+      ordered.push(img);
+      used.add(id);
+    }
+  }
+  for (const img of catalog) if (!used.has(img.id)) ordered.push(img);
+  return {
+    participantId: state.participantId,
+    ordered,
+    done: new Set(state.doneImageIds.filter((id) => byId.has(id))),
+    completed: state.completed,
+  };
+}
+
+// Primera posición, desde `from`, cuya imagen aún no tiene anotación (-1 si no hay).
+function findNextPending(ordered: ImageItem[], done: Set<string>, from: number): number {
+  for (let i = from; i < ordered.length; i++) if (!done.has(ordered[i].id)) return i;
+  return -1;
+}
+
+const countDone = (p: Participant) => p.ordered.filter((img) => p.done.has(img.id)).length;
+
+// Dónde debe seguir la persona: la final si ya terminó, el comentario si hizo
+// todas las imágenes, o la primera imagen pendiente.
+function targetFor(p: Participant): Target {
+  if (p.completed) return { screen: "complete", index: 0 };
+  const index = findNextPending(p.ordered, p.done, 0);
+  return index === -1 ? { screen: "comment", index: 0 } : { screen: "annotation", index };
 }
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("intro");
   const [imageIndex, setImageIndex] = useState(0);
-  const [participantId, setParticipantId] = useState<string>(() => crypto.randomUUID());
-  const [images, setImages] = useState<ImageItem[] | null>(null);
+  const [nextIndex, setNextIndex] = useState(0);
+  const [catalog, setCatalog] = useState<ImageItem[] | null>(null);
+  const [participant, setParticipant] = useState<Participant | null>(null);
   const [loadError, setLoadError] = useState(false);
   // Trazos (ya normalizados) de la imagen actual, a la espera de la calificación.
   const [pendingStrokes, setPendingStrokes] = useState<Stroke[] | null>(null);
+  // Destino calculado al ingresar el correo; se usa al pulsar "Continuar".
+  const targetRef = useRef<Target | null>(null);
 
-  const loadImages = useCallback(async () => {
+  const boot = useCallback(async () => {
     setLoadError(false);
-    setImages(null);
+    setCatalog(null);
     try {
-      // Cada participante ve las imágenes en un orden distinto: se mezcla
-      // aquí, salvo que haya una sesión guardada, que conserva su orden.
-      const fetched = shuffle(await fetchImages());
-      const saved = loadSession();
-      if (!saved) {
-        setImages(fetched);
-        return;
+      const images = await fetchImages();
+      const savedId = loadParticipantId();
+      if (savedId) {
+        // Pestaña ya identificada (recarga): se retoma sin volver a pedir el correo.
+        try {
+          const p = buildParticipant(images, await identifyParticipant({ participantId: savedId }));
+          const target = targetFor(p);
+          setParticipant(p);
+          setImageIndex(target.index);
+          setScreen(target.screen);
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) clearSession(); // id desconocido
+          else throw err;
+        }
       }
-      const { ordered, index } = applySession(fetched, saved);
-      setImages(ordered);
-      setParticipantId(saved.participantId);
-      setImageIndex(index);
-      setScreen(saved.completed ? "complete" : index >= ordered.length ? "comment" : "intro");
-      // Se guarda el orden ya reconciliado para que no cambie en la próxima recarga.
-      saveSession({ ...saved, order: ordered.map((img) => img.id), index });
+      setCatalog(images);
     } catch (err) {
-      console.error("No se pudieron cargar las imágenes:", err);
+      console.error("No se pudo cargar el estudio:", err);
       setLoadError(true);
     }
   }, []);
 
   useEffect(() => {
-    loadImages();
-  }, [loadImages]);
+    boot();
+  }, [boot]);
 
-  const total = images?.length ?? 0;
-
-  const handleStart = () => {
-    if (!images) return;
-    persist(images, participantId, 0);
-    setImageIndex(0);
-    setScreen("annotation");
+  // Registra o reconoce el correo en el servidor y calcula dónde seguir.
+  const handleIdentify = async (email: string): Promise<IdentifyInfo> => {
+    const p = buildParticipant(catalog!, await identifyParticipant({ email }));
+    saveParticipantId(p.participantId);
+    setParticipant(p);
+    const target = targetFor(p);
+    targetRef.current = target;
+    const done = countDone(p);
+    return {
+      showResume: target.screen === "annotation" && done > 0,
+      done,
+      total: p.ordered.length,
+      startNumber: target.index + 1,
+    };
   };
 
-  // Retoma en la imagen pendiente (imageIndex ya viene de la sesión guardada).
-  const handleContinue = () => setScreen("annotation");
-
-  // "Empezar de nuevo": borra lo guardado y arranca como un participante nuevo.
-  // Con el mismo id, el servidor trataría los guardados como duplicados.
-  const handleRestartSession = () => {
-    clearSession();
-    setParticipantId(crypto.randomUUID());
-    setImages((prev) => (prev ? shuffle(prev) : prev));
-    setPendingStrokes(null);
-    setImageIndex(0);
-    setScreen("intro");
+  const handleEmailContinue = () => {
+    const target = targetRef.current;
+    if (!target) return;
+    setImageIndex(target.index);
+    setScreen(target.screen);
   };
 
-  // Pasa a la imagen siguiente o, si era la última, al comentario final.
-  // Se llama cuando el servidor confirmó el guardado (o al saltar una imagen
-  // que no carga), y solo entonces avanza el índice guardado.
-  const goToNextImage = () => {
-    if (!images) return;
+  // Pasa a la siguiente imagen pendiente o, si no queda ninguna, al comentario.
+  // Se llama cuando el servidor confirmó el guardado (saved) o al saltar una
+  // imagen que no carga (no se guarda y seguirá pendiente).
+  const goToNextImage = (saved: boolean) => {
+    if (!participant) return;
     setPendingStrokes(null);
-    const next = imageIndex + 1;
-    persist(images, participantId, next);
-    if (next >= total) {
+    const done = new Set(participant.done);
+    if (saved) done.add(participant.ordered[imageIndex].id);
+    setParticipant({ ...participant, done });
+    const next = findNextPending(participant.ordered, done, imageIndex + 1);
+    if (next === -1) {
       setScreen("comment");
-    } else {
-      setScreen("transition");
-      setTimeout(() => {
-        setImageIndex(next);
-        setScreen("annotation");
-      }, 900);
+      return;
     }
+    setNextIndex(next);
+    setScreen("transition");
+    setTimeout(() => {
+      setImageIndex(next);
+      setScreen("annotation");
+    }, 900);
   };
 
   // Terminó de dibujar: no se guarda todavía, primero va la calificación.
@@ -109,22 +162,39 @@ export default function App() {
     setScreen("rating");
   };
 
-  // Cierra la encuesta: al recargar se mostrará la pantalla final, sin
-  // permitir otra pasada con el mismo participante.
-  const handleCommentDone = () => {
-    if (images) persist(images, participantId, images.length, true);
+  // Pausa: se olvida al participante en este navegador; el progreso queda en el servidor.
+  const handlePause = () => {
+    clearSession();
+    setPendingStrokes(null);
+    setScreen("pause");
+  };
+
+  const handleBackHome = () => {
+    setParticipant(null);
+    targetRef.current = null;
+    setImageIndex(0);
+    setScreen("intro");
+  };
+
+  // Cierra la encuesta: el servidor la marca completada (al volver a ingresar con
+  // el correo se verá la pantalla final) y el navegador olvida al participante.
+  const handleFinish = async () => {
+    if (!participant) return;
+    await postComplete(participant.participantId);
+    clearSession();
+    setParticipant({ ...participant, completed: true });
     setScreen("complete");
   };
 
   if (loadError) {
     return (
       <div className="size-full">
-        <ErrorScreen onRetry={loadImages} />
+        <ErrorScreen onRetry={boot} />
       </div>
     );
   }
 
-  if (!images) {
+  if (!catalog) {
     return (
       <div className="size-full">
         <LoadingScreen />
@@ -132,41 +202,44 @@ export default function App() {
     );
   }
 
+  const ordered = participant?.ordered ?? [];
+  const total = ordered.length;
+  // Las pantallas que necesitan al participante vuelven a la intro si no existe.
+  const view: Screen = !participant && !["intro", "email"].includes(screen) ? "intro" : screen;
+
   return (
     <div className="size-full">
-      {screen === "intro" && (
-        <IntroScreen
-          onStart={handleStart}
-          onContinue={handleContinue}
-          onRestart={handleRestartSession}
-          total={total}
-          resumeIndex={imageIndex}
-        />
-      )}
-      {screen === "annotation" && (
+      {view === "intro" && <IntroScreen onStart={() => setScreen("email")} total={catalog.length} />}
+      {view === "email" && <EmailScreen onIdentify={handleIdentify} onContinue={handleEmailContinue} />}
+      {view === "annotation" && participant && (
         <AnnotationScreen
           imageIndex={imageIndex}
           onDone={handleAnnotationDone}
-          onSkip={goToNextImage}
-          images={images}
+          onSkip={() => goToNextImage(false)}
+          onPause={handlePause}
+          images={ordered}
           total={total}
         />
       )}
-      {screen === "rating" && pendingStrokes && (
+      {view === "rating" && participant && pendingStrokes && (
         <RatingScreen
-          image={images[imageIndex]}
+          image={ordered[imageIndex]}
           strokes={pendingStrokes}
-          participantId={participantId}
-          onSaved={goToNextImage}
+          participantId={participant.participantId}
+          onSaved={() => goToNextImage(true)}
+          onPause={handlePause}
         />
       )}
-      {screen === "transition" && (
-        <TransitionScreen current={imageIndex + 1} next={imageIndex + 2} total={total} />
+      {view === "pause" && participant && (
+        <PauseScreen done={countDone(participant)} total={total} onBack={handleBackHome} />
       )}
-      {screen === "comment" && (
-        <CommentScreen participantId={participantId} onDone={handleCommentDone} />
+      {view === "transition" && participant && (
+        <TransitionScreen current={countDone(participant)} next={nextIndex + 1} total={total} />
       )}
-      {screen === "complete" && <CompleteScreen total={total} />}
+      {view === "comment" && participant && (
+        <CommentScreen participantId={participant.participantId} onFinish={handleFinish} />
+      )}
+      {view === "complete" && <CompleteScreen total={total || catalog.length} />}
     </div>
   );
 }

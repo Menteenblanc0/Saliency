@@ -12,10 +12,38 @@ export const content = {
     ],
     totalLabel: (n: number) => `${n} imágenes en total`,
     start: "Comenzar",
-    continue: (i: number, n: number) => `Continuar (imagen ${i} de ${n})`,
-    restart: "Empezar de nuevo",
-    restartConfirm: "¿Desea empezar de nuevo? Volverá a la primera imagen.",
-    footer: "Participación anónima · Datos usados solo con fines de investigación",
+    pauseNotice:
+      "Puede pausar en cualquier momento y continuar después, desde donde quedó, ingresando con el mismo correo electrónico.",
+    // PROVISIONAL: reemplazar por el aviso de tratamiento de datos oficial del supervisor.
+    dataNotice:
+      "Su correo electrónico se usará únicamente para identificar su participación y permitirle continuar más tarde. Sus respuestas se emplearán solo con fines de investigación.",
+  },
+  email: {
+    title: "Ingrese su correo electrónico",
+    body: "Lo usaremos para identificar su participación y para que pueda continuar más tarde desde donde quedó.",
+    label: "Correo electrónico",
+    placeholder: "nombre@correo.com",
+    next: "Continuar",
+    invalid: "Escriba un correo electrónico válido, por ejemplo nombre@correo.com.",
+    networkError: "No se pudo conectar. Revise su conexión e inténtelo de nuevo.",
+    confirmTitle: "Confirme su correo",
+    confirmBody: "Se usará este correo:",
+    confirmHint: "Para continuar más tarde tendrá que ingresar exactamente este mismo correo.",
+    confirm: "Confirmar y continuar",
+    edit: "Corregir",
+    checking: "Verificando...",
+    resumeTitle: "Le damos la bienvenida de nuevo",
+    resumeBody: (x: number, n: number) => `Continúa en la imagen ${x} de ${n}.`,
+    resumeContinue: "Continuar",
+  },
+  pause: {
+    button: "Pausar",
+    confirmUnsaved: "Esta imagen aún no se ha guardado y se repetirá cuando vuelva. ¿Desea pausar de todos modos?",
+    title: "Participación en pausa",
+    progress: (done: number, n: number) => `Ha completado ${done} de ${n} imágenes.`,
+    howToReturn:
+      "Para continuar más tarde, vuelva a ingresar con el mismo correo electrónico: retomará desde la primera imagen pendiente.",
+    backHome: "Volver al inicio",
   },
   annotation: {
     imageOf: (i: number, n: number) => `Imagen ${i} de ${n}`,
@@ -68,6 +96,7 @@ export const content = {
     sending: "Enviando...",
     skip: "Omitir",
     sendError: "No se pudo enviar el comentario. Puede intentarlo de nuevo u omitirlo.",
+    finishError: "No se pudo finalizar. Revise su conexión e inténtelo de nuevo.",
   },
   transition: {
     completed: (current: number, total: number) => `${current} / ${total} completadas`,
@@ -77,7 +106,7 @@ export const content = {
     title: "Gracias por participar",
     body1: (total: number) =>
       `Ha completado las ${total} imágenes del estudio. Su contribución es valiosa para nuestra investigación.`,
-    body2: "Los datos han sido registrados de forma anónima.",
+    body2: "Sus respuestas han sido registradas.",
     annotatedLabel: "imágenes anotadas",
     doneLabel: "completado",
   },

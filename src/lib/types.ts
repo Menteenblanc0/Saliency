@@ -1,4 +1,12 @@
-export type Screen = "intro" | "annotation" | "rating" | "transition" | "comment" | "complete";
+export type Screen =
+  | "intro"
+  | "email"
+  | "annotation"
+  | "rating"
+  | "pause"
+  | "transition"
+  | "comment"
+  | "complete";
 export type DesignAnswer = "si" | "no" | "no_determina";
 export type Tool = "brush" | "eraser";
 
