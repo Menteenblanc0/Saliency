@@ -8,6 +8,7 @@ import {
   type ParticipantState,
 } from "./lib/api";
 import { loadParticipantId, saveParticipantId, clearSession } from "./lib/session";
+import { PRIVACY, privacyIsComplete } from "./privacy";
 import { LoadingScreen, ErrorScreen } from "./components/StatusScreens";
 import { IntroScreen } from "./screens/IntroScreen";
 import { EmailScreen, type IdentifyInfo } from "./screens/EmailScreen";
@@ -108,12 +109,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!privacyIsComplete()) {
+      console.warn("Falta completar el responsable y el contacto del aviso de datos en src/privacy.ts");
+    }
     boot();
   }, [boot]);
 
   // Registra o reconoce el correo en el servidor y calcula dónde seguir.
   const handleIdentify = async (email: string): Promise<IdentifyInfo> => {
-    const p = buildParticipant(catalog!, await identifyParticipant({ email }));
+    const p = buildParticipant(catalog!, await identifyParticipant({ email, consent: true, consentVersion: PRIVACY.version }));
     saveParticipantId(p.participantId);
     setParticipant(p);
     const target = targetFor(p);

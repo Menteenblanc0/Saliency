@@ -36,6 +36,7 @@ flowchart TD
 src/
   App.tsx                    -- máquina de estados de la encuesta (qué pantalla toca)
   content.ts                 -- TODO el texto visible para el participante
+  privacy.ts                 -- responsable, contacto y versión del aviso de tratamiento de datos
   index.css                  -- estilos globales, variables de color y variantes de diseño
   main.tsx                   -- punto de entrada de React
   lib/
@@ -60,9 +61,15 @@ netlify/functions/
   annotations.ts             -- POST: valida y guarda una anotación (idempotente)
   feedback.ts                -- POST: guarda el comentario final
   images.ts                  -- GET: devuelve la lista de imágenes activas
+  participants.ts            -- POST: registra/identifica al participante (correo + autorización),
+                                devuelve su orden de imágenes y su progreso
+  complete.ts                -- POST: marca la encuesta del participante como completada
+netlify/lib/shared.ts        -- cliente de Supabase y utilidades compartidas por las funciones
 netlify.toml                 -- configuración de build y de netlify dev
+check-privacy.mjs            -- el build de producción falla si el aviso de datos está incompleto
 supabase/migrations/
   001_design_answer_feedback.sql  -- columna design_answer y tabla feedback
+  002_participants.sql            -- tabla participants (correo, orden, autorización) y vínculos
 scripts/
   generar_mapas_calor.py             -- mapa de grises promedio por imagen
   generar_puntajes.py                -- puntaje de diseño por imagen (CSV)
@@ -104,9 +111,9 @@ Solo el `participantId` (un UUID que entrega el servidor) en `sessionStorage`, c
 
 Todo lo que el frontend espera del servidor está en [`src/lib/api.ts`](src/lib/api.ts):
 
-- `POST /.netlify/functions/participants` con `{ email }` (ingreso) o `{ participantId }` (recarga) responde `{ participantId, order, doneImageIds, completed }`: `order` son los ids de todas las imágenes activas en el orden de ese participante, `doneImageIds` los ids que ya tienen anotación y `completed` si ya cerró la encuesta. Responde 400 si el correo es inválido y 404 si el `participantId` no existe.
+- `POST /.netlify/functions/participants` con `{ email, consent: true, consentVersion }` (ingreso) o `{ participantId }` (recarga) responde `{ participantId, order, doneImageIds, completed }`: `order` son los ids de todas las imágenes activas en el orden de ese participante, `doneImageIds` los ids que ya tienen anotación y `completed` si ya cerró la encuesta. Un correo **nuevo** solo se registra si llega `consent: true` y la versión del aviso (la autorización de tratamiento de datos); un correo ya registrado no la vuelve a exigir. Responde 400 si el correo es inválido o falta la autorización, y 404 si el `participantId` no existe.
 - `POST /.netlify/functions/complete` con `{ participantId }` marca la encuesta como completada.
-- `annotations` y `feedback` siguen igual y solo deberían aceptar participantes registrados.
+- `annotations` y `feedback` siguen igual, pero solo aceptan participantes registrados (400 en caso contrario).
 
 ### Dónde están los textos
 
@@ -197,9 +204,36 @@ create unique index if not exists idx_feedback_participant
   on feedback (participant_id);
 
 alter table feedback enable row level security;
+
+-- 3) Migración 002: participantes identificados por correo, con autorización
+--    (el mismo contenido está en supabase/migrations/002_participants.sql)
+create table if not exists participants (
+  id uuid primary key default gen_random_uuid(),
+  email text not null check (email = lower(btrim(email)) and char_length(email) <= 254),
+  image_order jsonb not null default '[]'::jsonb,
+  consent_version text not null,
+  consent_at timestamptz not null default now(),
+  completed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists idx_participants_email on participants (email);
+alter table participants enable row level security;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'fk_annotations_participant') then
+    alter table annotations add constraint fk_annotations_participant
+      foreign key (participant_id) references participants (id) not valid;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_feedback_participant') then
+    alter table feedback add constraint fk_feedback_participant
+      foreign key (participant_id) references participants (id) not valid;
+  end if;
+end $$;
 ```
 
-> **La migración se corre ANTES de desplegar el código nuevo.** Sin la columna `design_answer` ni la tabla `feedback`, el guardado falla.
+> **Las migraciones se corren ANTES de desplegar el código nuevo.** Sin la columna `design_answer`, la tabla `feedback` y la tabla `participants`, el sitio no funciona.
 
 El **índice único** `idx_annotations_unique_submission` es el que hace idempotente el guardado: si un reintento llega dos veces, la segunda se trata como éxito en vez de duplicar la fila.
 
@@ -207,6 +241,7 @@ El **índice único** `idx_annotations_unique_submission` es el que hace idempot
 
 - **`annotations`**: una fila por participante e imagen, con los trazos (`strokes`) y la respuesta de diseño en texto crudo (`design_answer`: `'si'`, `'no'` o `'no_determina'`). No hay escala numérica en la base: el paso a puntaje vive solo en `scripts/generar_puntajes.py`.
 - **`feedback`**: el comentario final opcional, una fila por participante.
+- **`participants`**: una fila por correo (normalizado). Guarda el orden de imágenes de esa persona (`image_order`, lo decide y reconcilia el servidor), la **prueba de la autorización** de tratamiento de datos (`consent_version` y `consent_at`) y si cerró la encuesta (`completed_at`). **El correo vive solo aquí**: `annotations` y `feedback` solo conocen el id aleatorio, y ningún script de análisis lee la tabla. El progreso no se guarda: se deduce de las filas de `annotations` de esa persona. `annotations` y `feedback` solo aceptan ids de participantes registrados.
 
 ### Formato de `strokes` (columna `jsonb`)
 
@@ -244,7 +279,7 @@ El sitio se adapta solo a cuántas imágenes haya (contador, barra de progreso, 
 3. En [app.netlify.com](https://app.netlify.com): **Add new site → Import an existing project → GitHub** → selecciona el repositorio.
 4. Netlify detecta `netlify.toml` automáticamente (build command `pnpm build`, publish `dist`, functions `netlify/functions`).
 5. Antes o después del primer deploy, ve a **Site configuration → Environment variables** y agrega `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` con los mismos valores de tu `.env` local. Si las agregas después del primer deploy, tienes que forzar uno nuevo (**Deploys → Trigger deploy → Clear cache and deploy site**) para que se apliquen.
-6. Prueba el flujo completo en la URL pública (ver la lista de verificación de la sección 10).
+6. Prueba el flujo completo en la URL pública (ver la lista de verificación de la sección 11).
 
 ## 9. Scripts de análisis (`scripts/`)
 
@@ -268,30 +303,70 @@ Crea un `.env` dentro de `scripts/` con las mismas dos variables de Supabase y c
 
 Pruebas (no necesitan Supabase ni internet): `python test_mapas_grises.py` y `python test_puntajes.py`.
 
-## 10. Lista de verificación antes de abrir el estudio
+## 10. Datos personales y privacidad
 
-1. **Migración corrida en Supabase antes del despliegue** (sección 6). Compruébelo:
+El único dato personal que se recolecta es el **correo electrónico**, más lo que la persona escriba en el comentario final. Está pensado para la Ley 1581 de 2012 (protección de datos personales, Colombia), que exige una autorización **previa, expresa e informada**, informar la finalidad, los derechos del titular y quién es el responsable, y **conservar prueba** de ello.
+
+**Cómo está resuelto en el sitio**
+- El aviso completo (responsable, datos, finalidad, carácter voluntario, derechos, conservación, mayoría de edad y almacenamiento en la nube) se muestra en la pantalla del correo, y una casilla **sin marcar de antemano** ("Soy mayor de 18 años, he leído el aviso… y autorizo…") es obligatoria para continuar. El texto está en `src/content.ts` (bloque `privacy`).
+- La **prueba de la autorización** queda en `participants.consent_version` y `participants.consent_at`; el servidor no registra un correo nuevo sin ella.
+- Se pide solo el correo (sin nombre) y no se piden datos sensibles. El correo está en una tabla aparte, con RLS y sin lectura desde el navegador, y los scripts de análisis usan solo el id aleatorio.
+
+**Lo que hay que completar antes de abrir el estudio**
+1. En [`src/privacy.ts`](src/privacy.ts), reemplazar los marcadores `[COMPLETAR…]` de `responsable` (quién trata los datos: universidad o grupo de investigación) y `contacto` (correo para consultas, reclamos y solicitudes). **El build de producción en Netlify falla mientras queden esos marcadores**, a propósito, para no publicar el aviso a medias.
+2. Que el supervisor o la oficina jurídica de la institución **revise el texto** (finalidad, conservación, almacenamiento en servicios en la nube fuera de Colombia, menores de edad, política de tratamiento de información de la institución y si hay que registrar la base de datos en el RNBD). Si cambia el texto del aviso, cambiar también `PRIVACY.version`.
+3. Tener un buzón atendido en el correo de contacto: es el canal para los derechos de las personas.
+
+**Atender solicitudes de los titulares** (en Supabase → SQL Editor; reemplace el correo):
+
+```sql
+-- Prueba de la autorización (cuándo y con qué versión del aviso)
+select email, consent_version, consent_at from participants where email = 'persona@correo.com';
+
+-- Supresión total: se borra todo lo de esa persona (respuestas, comentario y correo). Irreversible.
+delete from feedback where participant_id = (select id from participants where email = 'persona@correo.com');
+delete from annotations where participant_id = (select id from participants where email = 'persona@correo.com');
+delete from participants where email = 'persona@correo.com';
+
+-- Desvincular el correo y conservar sus respuestas sin identificarla
+update participants set email = 'eliminado-' || id::text || '@invalid.local' where email = 'persona@correo.com';
+```
+
+**Al terminar el estudio**, para desvincular a todas las personas de sus respuestas (según lo que diga el aviso): `update participants set email = 'eliminado-' || id::text || '@invalid.local';`
+
+**Limitación conocida**: el correo no se verifica. Quien conozca el correo de otra persona puede ingresar con él, continuar su progreso y responder en su nombre. Si el estudio lo necesita, la verificación (enlace o código por correo) es un cambio aparte.
+
+## 11. Lista de verificación antes de abrir el estudio
+
+1. **Migraciones 001 y 002 corridas en Supabase antes del despliegue** (sección 6). Compruébelo:
    ```sql
    select 'columna design_answer' as revision, count(*)::text as resultado
      from information_schema.columns
      where table_name = 'annotations' and column_name = 'design_answer'
    union all
    select 'indice: ' || indexname, 'ok'
-     from pg_indexes where tablename in ('annotations', 'feedback')
+     from pg_indexes where tablename in ('annotations', 'feedback', 'participants')
    union all
-   select 'tabla feedback', coalesce(to_regclass('public.feedback')::text, 'NO existe');
+   select 'vinculo: ' || conname, 'ok'
+     from pg_constraint where conname in ('fk_annotations_participant', 'fk_feedback_participant')
+   union all
+   select 'tabla feedback', coalesce(to_regclass('public.feedback')::text, 'NO existe')
+   union all
+   select 'tabla participants', coalesce(to_regclass('public.participants')::text, 'NO existe');
    ```
-   Debe aparecer `design_answer = 1`, `idx_annotations_unique_submission`, `idx_feedback_participant` y `feedback`. Y la tabla `images` debe tener filas con `active = true`.
+   Debe aparecer `design_answer = 1`, `idx_annotations_unique_submission`, `idx_feedback_participant`, `idx_participants_email`, los dos vínculos y las tablas `feedback` y `participants`. Y la tabla `images` debe tener filas con `active = true`.
+1b. **Aviso de datos completo** (sección 10): `responsable` y `contacto` en `src/privacy.ts`, texto revisado por el supervisor y buzón de contacto atendido.
 2. **Desplegado en Netlify** y probado en la URL pública, en un **teléfono real** (vertical y horizontal), con las variables de entorno puestas.
 3. **Un participante de prueba** entra con un correo, completa 3 o 4 imágenes, **recarga la pestaña** (no debe pedir el correo), **pausa, cierra el navegador por completo y vuelve a ingresar con el mismo correo** (debe continuar en la primera imagen pendiente, con el mismo orden), termina y deja un comentario.
 4. **Se confirman las filas en Supabase**:
    ```sql
    select image_id, design_answer, jsonb_array_length(strokes) as trazos from annotations order by created_at;
    select * from feedback;
+   select consent_version, consent_at, completed_at, jsonb_array_length(image_order) as imagenes from participants;
    ```
 5. **Corren los scripts de mapas y de puntajes** con esos datos y los resultados tienen sentido (el mapa de grises coincide con lo dibujado; el puntaje con lo respondido).
 6. **Se borran los datos de prueba antes de abrir el estudio real** (irreversible; no toca el catálogo `images`):
    ```sql
-   truncate table annotations, feedback;
+   truncate table annotations, feedback, participants;
    ```
    Cierre también la pestaña de prueba: su `sessionStorage` conserva el `participantId` del participante de prueba, que dejaría de existir en la base.

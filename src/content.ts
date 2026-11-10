@@ -1,3 +1,5 @@
+import { PRIVACY } from "./privacy";
+
 // Todo el texto visible para el participante vive aquí, en trato de usted.
 // Los textos 1 y 2 (instrucciones y calificación) son los oficiales del
 // Anexo del plan: no se reescriben.
@@ -14,9 +16,51 @@ export const content = {
     start: "Comenzar",
     pauseNotice:
       "Puede pausar en cualquier momento y continuar después, desde donde quedó, ingresando con el mismo correo electrónico.",
-    // PROVISIONAL: reemplazar por el aviso de tratamiento de datos oficial del supervisor.
     dataNotice:
-      "Su correo electrónico se usará únicamente para identificar su participación y permitirle continuar más tarde. Sus respuestas se emplearán solo con fines de investigación.",
+      "Para participar se le pedirá su correo electrónico y su autorización para tratar sus datos. Su participación es voluntaria.",
+  },
+  // Aviso y autorización de tratamiento de datos personales (Ley 1581 de 2012).
+  // Si cambia este texto, cambie también PRIVACY.version en src/privacy.ts.
+  privacy: {
+    toggle: "Ver aviso completo de tratamiento de datos",
+    title: "Autorización para el tratamiento de datos personales",
+    intro: "Antes de continuar, lea cómo se tratarán sus datos.",
+    sections: [
+      {
+        heading: "Responsable del tratamiento",
+        text: `${PRIVACY.responsable}. Contacto para consultas, reclamos y solicitudes: ${PRIVACY.contacto}.`,
+      },
+      {
+        heading: "Datos que se recolectan",
+        text: "Su correo electrónico y sus respuestas en el estudio: las zonas que marca en cada imagen, su calificación de cada diseño y, si lo desea, un comentario final. No se le piden datos sensibles ni su nombre; le pedimos no incluir datos personales de terceros ni información sensible en el comentario. Los servicios de alojamiento pueden registrar datos técnicos de conexión necesarios para su funcionamiento.",
+      },
+      {
+        heading: "Finalidad",
+        text: "Su correo se usa únicamente para identificar su participación y permitirle pausar y continuar después. Sus respuestas se analizan con fines de investigación científica y estadística, incluida la construcción de modelos de inteligencia artificial sobre atención visual y diseño de anuncios; los análisis se hacen con un identificador aleatorio, sin su correo.",
+      },
+      {
+        heading: "Carácter voluntario",
+        text: "Su participación y esta autorización son voluntarias. Si no la otorga, no podrá participar. Puede dejar el estudio en cualquier momento.",
+      },
+      {
+        heading: "Sus derechos",
+        text: `Como titular de los datos puede conocerlos, actualizarlos y rectificarlos; solicitar prueba de esta autorización; ser informado del uso que se les ha dado; acceder a ellos de forma gratuita; revocar la autorización y solicitar la supresión de su correo y de sus datos; y presentar quejas ante la Superintendencia de Industria y Comercio. Para ejercer estos derechos escriba a ${PRIVACY.contacto}.`,
+      },
+      {
+        heading: "Conservación",
+        text: "Su correo se conservará mientras dure el estudio y se eliminará o se desvinculará de sus respuestas al finalizar este o cuando usted lo solicite.",
+      },
+      {
+        heading: "Personas mayores de edad",
+        text: "Este estudio está dirigido a personas mayores de 18 años.",
+      },
+      {
+        heading: "Almacenamiento",
+        text: "Los datos se guardan en servicios de infraestructura en la nube de terceros (Supabase y Netlify), que pueden estar ubicados fuera de Colombia. Al autorizar, usted acepta este almacenamiento.",
+      },
+    ],
+    consentLabel:
+      "Soy mayor de 18 años, he leído el aviso de tratamiento de datos y autorizo de forma previa, expresa e informada el tratamiento de mi correo electrónico y de mis respuestas para las finalidades indicadas.",
   },
   email: {
     title: "Ingrese su correo electrónico",

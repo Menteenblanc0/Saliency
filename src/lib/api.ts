@@ -32,14 +32,15 @@ async function postJson(path: string, payload: unknown): Promise<unknown> {
 // ---- Contrato con el backend (funciones `participants` y `complete`) ----
 //
 // POST /.netlify/functions/participants
-//   body: { email } (primer ingreso o ingreso desde otro dispositivo)
+//   body: { email, consent: true, consentVersion } (ingreso: la autorización de
+//         tratamiento de datos es obligatoria la primera vez que entra un correo)
 //      o { participantId } (recarga de una pestaña ya identificada)
 //   200:  { participantId, order, doneImageIds, completed }
 //         order        ids de TODAS las imágenes activas en el orden de este
 //                      participante (el servidor lo decide y lo reconcilia)
 //         doneImageIds ids de las imágenes que ya tienen anotación guardada
 //         completed    true si ya cerró la encuesta
-//   400:  correo inválido      404: participantId desconocido
+//   400:  correo inválido o falta la autorización      404: participantId desconocido
 //
 // POST /.netlify/functions/complete   body: { participantId }   200: { ok: true }
 export interface ParticipantState {
@@ -53,7 +54,7 @@ const isStringArray = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
 
 export async function identifyParticipant(
-  by: { email: string } | { participantId: string },
+  by: { email: string; consent: true; consentVersion: string } | { participantId: string },
 ): Promise<ParticipantState> {
   const data = (await postJson("/.netlify/functions/participants", by)) as Record<string, unknown>;
   if (

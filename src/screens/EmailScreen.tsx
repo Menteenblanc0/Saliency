@@ -27,10 +27,12 @@ export function EmailScreen({
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [accepted, setAccepted] = useState(false); // autorización de tratamiento de datos
   const [info, setInfo] = useState<IdentifyInfo | null>(null);
 
   const submitForm = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!accepted) return;
     const normalized = normalizeEmail(raw);
     if (!normalized) {
       setError(content.email.invalid);
@@ -100,9 +102,39 @@ export function EmailScreen({
                 {error}
               </p>
             )}
+
+            {/* Autorización de tratamiento de datos (previa, expresa e informada) */}
+            <details className="rounded-sm mt-6" style={{ border: "1px solid var(--border)" }}>
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium select-none">
+                {content.privacy.toggle}
+              </summary>
+              <div className="px-3 pb-3 max-h-64 overflow-y-auto">
+                <p className="text-sm font-medium mb-1">{content.privacy.title}</p>
+                <p className="text-sm mb-3" style={{ color: "var(--muted-foreground)" }}>
+                  {content.privacy.intro}
+                </p>
+                {content.privacy.sections.map((s) => (
+                  <div key={s.heading} className="mb-3">
+                    <p className="text-sm font-semibold">{s.heading}</p>
+                    <p className="text-sm leading-relaxed">{s.text}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
+            <label className="flex items-start gap-3 mt-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={accepted}
+                onChange={(e) => setAccepted(e.target.checked)}
+                className="mt-1 size-5 shrink-0"
+                style={{ accentColor: "var(--accent)" }}
+              />
+              <span className="text-sm leading-relaxed">{content.privacy.consentLabel}</span>
+            </label>
+
             <button
               type="submit"
-              disabled={raw.trim().length === 0}
+              disabled={raw.trim().length === 0 || !accepted}
               className={`${primaryButton} mt-6`}
               style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
             >
