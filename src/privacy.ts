@@ -13,7 +13,7 @@ export const PRIVACY = {
   responsable:
     "Christopher Alexandro Morán Rodríguez",
   contacto:
-    "cmoran@universidad.edu.co",
+    "cmoran@unimagdalena.edu.co",
 } as const;
 
 export const privacyIsComplete = (): boolean =>
