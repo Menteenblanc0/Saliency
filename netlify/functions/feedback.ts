@@ -4,23 +4,9 @@
 // final opcional en la tabla `feedback` (una fila por participante).
 // Un segundo envío del mismo participante se ignora y cuenta como éxito.
 
-import { createClient } from "@supabase/supabase-js";
+import { supabase, json, UUID_RE, participantExists } from "../lib/shared";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_COMMENT_LENGTH = 2000;
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 export default async (req: Request) => {
   if (req.method !== "POST") {
@@ -51,6 +37,16 @@ export default async (req: Request) => {
       { error: `El comentario debe tener entre 1 y ${MAX_COMMENT_LENGTH} caracteres` },
       400,
     );
+  }
+
+  // Solo se aceptan comentarios de participantes registrados.
+  try {
+    if (!(await participantExists(participantId))) {
+      return json({ error: "participante no registrado" }, 400);
+    }
+  } catch (err) {
+    console.error("Error comprobando al participante:", err);
+    return json({ error: "No se pudo guardar" }, 500);
   }
 
   const { error } = await supabase.from("feedback").upsert(

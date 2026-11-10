@@ -2,37 +2,17 @@
 //
 // Recibe POST desde el frontend con
 // { participantId, imageId, strokes, designAnswer }
-// y lo inserta en la tabla `annotations` de Supabase.
-//
-// SUPABASE_SERVICE_ROLE_KEY tiene permisos totales sobre la base de
-// datos -- por eso vive SOLO aquí (una función que corre en el
-// servidor de Netlify) y nunca en el código del frontend ni en
-// variables que empiecen con VITE_ (esas sí terminan en el bundle
-// público del navegador).
+// y lo inserta en la tabla `annotations` de Supabase. El participante debe
+// estar registrado (función `participants`).
 //
 // El guardado es idempotente: si la anotación de ese participante para
 // esa imagen ya existe, se responde 200 con { duplicate: true }.
 
-import { createClient } from "@supabase/supabase-js";
+import { supabase, json, UUID_RE, PG_UNIQUE_VIOLATION, participantExists } from "../lib/shared";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DESIGN_ANSWERS = ["si", "no", "no_determina"];
 const MAX_STROKES = 300;
 const MAX_POINTS_PER_STROKE = 5000;
-const PG_UNIQUE_VIOLATION = "23505";
-
-function json(body: unknown, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 const isUnit = (n: unknown): boolean =>
   typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -109,6 +89,16 @@ export default async (req: Request) => {
     strokes: unknown[];
     designAnswer: string;
   };
+
+  // Solo se aceptan respuestas de participantes registrados (tabla participants).
+  try {
+    if (!(await participantExists(participantId))) {
+      return json({ error: "participante no registrado" }, 400);
+    }
+  } catch (err) {
+    console.error("Error comprobando al participante:", err);
+    return json({ error: "No se pudo guardar" }, 500);
+  }
 
   // La imagen debe existir en el catálogo del estudio.
   const { data: image, error: imageError } = await supabase
