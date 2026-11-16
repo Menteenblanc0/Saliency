@@ -95,3 +95,8 @@ export async function postAnnotation(payload: {
 export async function postFeedback(participantId: string, comment: string): Promise<void> {
   await postJson("/.netlify/functions/feedback", { participantId, comment });
 }
+
+// Comentario opcional asociado a una imagen específica.
+export async function postImageFeedback(participantId: string, imageId: string, comment: string): Promise<void> {
+  await postJson("/.netlify/functions/image-feedback", { participantId, imageId, comment });
+}

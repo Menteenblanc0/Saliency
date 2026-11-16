@@ -8,7 +8,7 @@ una serie de imágenes publicitarias, una por una:
 
 Cada persona ingresa con su **correo electrónico** (sin verificación), lo que le
 permite **pausar y continuar después** desde donde quedó. Al final puede dejar un
-**comentario opcional**. Con esos datos se construyen mapas de grises de atención
+**comentario opcional por imagen**. Con esos datos se construyen mapas de grises de atención
 y puntajes de diseño por imagen.
 
 ## 1. Arquitectura
@@ -27,7 +27,7 @@ flowchart TD
 
 - **Frontend**: React + Vite + Tailwind, dividido en `src/` por pantallas, componentes y utilidades.
 - **Backend**: Netlify Functions (`netlify/functions/`), sin servidor propio que mantener. Validan todo lo que reciben antes de escribir en la base.
-- **Base de datos**: Supabase (Postgres) con tres tablas: `images` (catálogo), `annotations` (una fila por participante e imagen) y `feedback` (un comentario por participante).
+- **Base de datos**: Supabase (Postgres) con tres tablas: `images` (catálogo), `annotations` (una fila por participante e imagen) y `feedback` (comentarios finales históricos) e `image_feedback` (comentarios opcionales asociados a cada imagen).
 - **Análisis**: scripts de Python en `scripts/`, independientes del sitio, que se conectan directamente a Supabase.
 
 ## 2. Estructura del repositorio
@@ -55,11 +55,12 @@ src/
     RatingScreen.tsx         -- calificación del diseño (Sí / No / No puedo determinarlo)
     PauseScreen.tsx          -- participación en pausa: avance y cómo volver
     TransitionScreen.tsx     -- pausa breve entre imágenes
-    CommentScreen.tsx        -- comentario final opcional
+    CommentScreen.tsx        -- comentario opcional por imagen
     CompleteScreen.tsx       -- agradecimiento
 netlify/functions/
   annotations.ts             -- POST: valida y guarda una anotación (idempotente)
-  feedback.ts                -- POST: guarda el comentario final
+  feedback.ts                -- POST: comentarios finales históricos
+  image-feedback.ts          -- POST: comentario opcional por imagen
   images.ts                  -- GET: devuelve la lista de imágenes activas
   participants.ts            -- POST: registra/identifica al participante (correo + autorización),
                                 devuelve su orden de imágenes y su progreso
@@ -87,13 +88,13 @@ scripts/
 3. **Dibujo**: sobre cada imagen marca con el pincel lo que llama su atención. Puede borrar, deshacer o limpiar, y volver a leer las instrucciones con *Ver instrucciones*. *Siguiente* se habilita solo cuando hay al menos un trazo de pincel. Solo se puede dibujar sobre la imagen, no sobre las franjas vacías.
 4. **Calificación**: ve la imagen sin trazos, lee el Texto 2 y responde *Sí*, *No* o *No puedo determinarlo* (sin opción preseleccionada). Al pulsar *Continuar* se guarda **una sola vez** el dibujo y la respuesta. Si falla el guardado, se muestra el error y se puede reintentar sin perder nada.
 5. Repite 3–4 para cada imagen pendiente (si una imagen no carga, puede saltarla).
-6. **Comentario final** opcional (hasta 2000 caracteres). Al cerrarlo (enviado u omitido) la encuesta se marca como completada y aparece la **pantalla de agradecimiento**.
+6. **Comentario opcional por imagen** (hasta 2000 caracteres) después de guardar su calificación. Al terminar el último comentario (enviado u omitido), la encuesta se marca como completada.
 
 ### Identificación, orden y progreso
 
 - La persona se identifica **solo por correo**; no hay verificación, recordatorios ni inicio de sesión.
 - **El servidor decide y guarda el orden** de las imágenes la primera vez que entra el correo. El navegador no mezcla nada: ordena el catálogo con el `order` que recibe. Al volver, el servidor lo reconcilia con las imágenes activas (descarta las que ya no existen y agrega al final las nuevas).
-- **El progreso se deduce de las anotaciones guardadas**: la encuesta sigue en la primera imagen del orden que todavía no tiene anotación (`doneImageIds`). No hay un contador aparte. Si ya hizo todas pero no cerró, va al comentario; si ya cerró, ve la pantalla final.
+- **El progreso se deduce de las anotaciones guardadas**: la encuesta sigue en la primera imagen del orden que todavía no tiene anotación (`doneImageIds`). No hay un contador aparte. Si ya hizo todas pero no cerró, va al comentario de la última imagen; si ya cerró, ve la pantalla final.
 
 ### Pausa
 
@@ -370,3 +371,12 @@ update participants set email = 'eliminado-' || id::text || '@invalid.local' whe
    truncate table annotations, feedback, participants;
    ```
    Cierre también la pestaña de prueba: su `sessionStorage` conserva el `participantId` del participante de prueba, que dejaría de existir en la base.
+
+
+### Comentarios opcionales por imagen (migración 003)
+
+Ejecutar `supabase/migrations/003_image_feedback.sql` en Supabase SQL Editor **antes** de desplegar el código. Crea la tabla `image_feedback` con un comentario opcional por participante e imagen. La tabla histórica `feedback` no se modifica. Cada comentario admite hasta 2000 caracteres y solo se acepta si esa imagen ya tiene una anotación registrada.
+
+Flujo: **marcar imagen → calificar diseño → comentar u omitir → siguiente imagen**. Tras la última imagen se cierra el estudio. Si se cierra la pestaña antes de enviar un comentario, el texto no enviado no se conserva. Los comentarios no intervienen en la generación de mapas de atención o puntajes de diseño.
+
+Para suprimir todos los datos de un participante también es necesario eliminar sus filas de `image_feedback` antes de eliminar la fila de `participants`.

@@ -32,7 +32,7 @@ export const content = {
       },
       {
         heading: "Datos que se recolectan",
-        text: "Su correo electrónico y sus respuestas en el estudio: las zonas que marca en cada imagen, su calificación de cada diseño y, si lo desea, un comentario final. No se le piden datos sensibles ni su nombre; le pedimos no incluir datos personales de terceros ni información sensible en el comentario. Los servicios de alojamiento pueden registrar datos técnicos de conexión necesarios para su funcionamiento.",
+        text: "Su correo electrónico y sus respuestas en el estudio: las zonas que marca en cada imagen, su calificación de cada diseño y, si lo desea, un comentario opcional por imagen. No se le piden datos sensibles ni su nombre; le pedimos no incluir datos personales de terceros ni información sensible en los comentarios. Los servicios de alojamiento pueden registrar datos técnicos de conexión necesarios para su funcionamiento.",
       },
       {
         heading: "Finalidad",
@@ -132,15 +132,15 @@ export const content = {
     saveError: "No se pudo guardar. Revise su conexión e inténtelo de nuevo.",
   },
   comment: {
-    title: "Un último paso",
-    body: "Si lo desea, déjenos un comentario sobre el estudio. Es totalmente opcional.",
+    title: "Comentario sobre esta imagen",
+    body: "Si lo desea, deje un comentario sobre esta imagen publicitaria. Es totalmente opcional.",
     label: "Comentario (opcional)",
     placeholder: "Escriba aquí su comentario",
-    send: "Enviar y finalizar",
+    send: "Enviar y continuar",
     sending: "Enviando...",
     skip: "Omitir",
     sendError: "No se pudo enviar el comentario. Puede intentarlo de nuevo u omitirlo.",
-    finishError: "No se pudo finalizar. Revise su conexión e inténtelo de nuevo.",
+    finishError: "No se pudo continuar. Revise su conexión e inténtelo de nuevo.",
   },
   transition: {
     completed: (current: number, total: number) => `${current} / ${total} completadas`,
