@@ -1,112 +1,122 @@
-﻿import { Handler } from '@netlify/functions';
-import { createClient } from '@supabase/supabase-js';
-import { normalizeEmail, reconcileOrder } from './utils/participants-utils';
+// Identifica al participante por correo o por el id guardado en la pestaña.
+// El orden de imágenes y el progreso se recuperan siempre desde Supabase.
+import { supabase, json, UUID_RE, PG_UNIQUE_VIOLATION } from "../lib/shared";
+import { reconcileOrder } from "./utils/participants-utils";
 
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+type ParticipantRow = {
+  id: string;
+  image_order: string[] | null;
+  completed_at: string | null;
+};
 
-export const handler: Handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  return email.length > 0 && email.length <= 254 && EMAIL_RE.test(email) ? email : null;
+}
+
+async function activeImageIds(): Promise<string[]> {
+  const { data, error } = await supabase.from("images").select("id").eq("active", true);
+  if (error) throw error;
+  return (data ?? []).map((image) => image.id as string);
+}
+
+async function getParticipant(column: "id" | "email", value: string): Promise<ParticipantRow | null> {
+  const { data, error } = await supabase
+    .from("participants")
+    .select("id, image_order, completed_at")
+    .eq(column, value)
+    .maybeSingle();
+  if (error) throw error;
+  return data as ParticipantRow | null;
+}
+
+async function loadState(participant: ParticipantRow) {
+  const ids = await activeImageIds();
+  const previousOrder = Array.isArray(participant.image_order) ? participant.image_order : [];
+  const order = reconcileOrder(previousOrder, ids);
+  if (JSON.stringify(order) !== JSON.stringify(previousOrder)) {
+    const { error } = await supabase
+      .from("participants")
+      .update({ image_order: order })
+      .eq("id", participant.id);
+    if (error) throw error;
+  }
+
+  const { data: annotations, error } = await supabase
+    .from("annotations")
+    .select("image_id")
+    .eq("participant_id", participant.id);
+  if (error) throw error;
+
+  return {
+    participantId: participant.id,
+    order,
+    doneImageIds: [...new Set((annotations ?? []).map((entry) => entry.image_id as string))],
+    completed: participant.completed_at !== null,
+  };
+}
+
+export default async (req: Request) => {
+  if (req.method !== "POST") return json({ error: "Método no permitido" }, 405);
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ code: "INVALID_REQUEST", error: "JSON inválido" }, 400);
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return json({ code: "INVALID_REQUEST", error: "Solicitud inválida" }, 400);
+  }
+
+  const input = body as Record<string, unknown>;
+  const byId = Object.prototype.hasOwnProperty.call(input, "participantId");
+  const byEmail = Object.prototype.hasOwnProperty.call(input, "email");
+  if (byId === byEmail) {
+    return json({ code: "INVALID_REQUEST", error: "Indique correo o identificador" }, 400);
+  }
+
+  if (byId && (typeof input.participantId !== "string" || !UUID_RE.test(input.participantId))) {
+    return json({ code: "INVALID_REQUEST", error: "Identificador inválido" }, 400);
+  }
+  const email = byEmail ? normalizeEmail(input.email) : null;
+  if (byEmail && !email) {
+    return json({ code: "INVALID_EMAIL", error: "Correo inválido" }, 400);
   }
 
   try {
-    const body = JSON.parse(event.body || '{}');
-    const { action, participantId } = body;
-    const email = body.email ? normalizeEmail(body.email) : undefined;
-
-    if (action === 'register') {
-      if (!email) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'Email requerido' }) };
-      }
-
-      const { data: activeImages } = await supabase.from('images').select('id').eq('is_active', true);
-      const activeIds = (activeImages || []).map((img) => img.id);
-
-      const { data: existing } = await supabase
-        .from('participants')
-        .select('*')
-        .eq('email', email)
-        .maybeSingle();
-
-      let participant = existing;
-
+    let participant: ParticipantRow | null;
+    if (byId) {
+      participant = await getParticipant("id", input.participantId as string);
+      if (!participant) return json({ code: "NOT_FOUND", error: "Participante desconocido" }, 404);
+    } else {
+      participant = await getParticipant("email", email!);
       if (!participant) {
-        const shuffledOrder = reconcileOrder([], activeIds);
+        if (input.consent !== true || typeof input.consentVersion !== "string" || !input.consentVersion.trim()) {
+          return json({ code: "CONSENT_REQUIRED", error: "Se requiere la autorización" }, 400);
+        }
+        const order = reconcileOrder([], await activeImageIds());
         const { data: created, error } = await supabase
-          .from('participants')
-          .insert([{ email, image_order: shuffledOrder, last_seen_at: new Date().toISOString() }])
-          .select()
+          .from("participants")
+          .insert({ email, image_order: order, consent_version: input.consentVersion })
+          .select("id, image_order, completed_at")
           .single();
-
-        if (error) throw error;
-        participant = created;
-      } else {
-        const updatedOrder = reconcileOrder(participant.image_order || [], activeIds);
-        const { data: updated } = await supabase
-          .from('participants')
-          .update({ image_order: updatedOrder, last_seen_at: new Date().toISOString() })
-          .eq('id', participant.id)
-          .select()
-          .single();
-
-        participant = updated;
+        if (error) {
+          // Dos pestañas pueden intentar registrar simultáneamente el mismo correo.
+          if (error.code !== PG_UNIQUE_VIOLATION) throw error;
+          participant = await getParticipant("email", email!);
+          if (!participant) throw error;
+        } else {
+          participant = created as ParticipantRow;
+        }
       }
-
-      const { data: done } = await supabase
-        .from('annotations')
-        .select('image_id')
-        .eq('participant_id', participant.id);
-
-      const doneImageIds = (done || []).map((d) => d.image_id);
-
-      return {
-        statusCode: 200,
-        body: JSON.stringify({
-          participantId: participant.id,
-          imageOrder: participant.image_order,
-          doneImageIds,
-        }),
-      };
     }
-
-    if (action === 'complete') {
-      if (!participantId) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'participantId requerido' }) };
-      }
-
-      const { data: activeImages } = await supabase.from('images').select('id').eq('is_active', true);
-      const activeIds = (activeImages || []).map((img) => img.id);
-
-      const { data: doneAnnotations } = await supabase
-        .from('annotations')
-        .select('image_id')
-        .eq('participant_id', participantId);
-
-      const completedIds = new Set((doneAnnotations || []).map((a) => a.image_id));
-      const pendingImageIds = activeIds.filter((id) => !completedIds.has(id));
-
-      if (pendingImageIds.length > 0) {
-        return {
-          statusCode: 400,
-          body: JSON.stringify({
-            error: 'No se han completado todas las imágenes requeridas',
-            pendingImageIds,
-          }),
-        };
-      }
-
-      await supabase
-        .from('participants')
-        .update({ completed_at: new Date().toISOString(), last_seen_at: new Date().toISOString() })
-        .eq('id', participantId);
-
-      return { statusCode: 200, body: JSON.stringify({ ok: true }) };
-    }
-
-    return { statusCode: 400, body: JSON.stringify({ error: 'Acción no válida' }) };
-  } catch (err: any) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return json(await loadState(participant), 200);
+  } catch (err) {
+    console.error("Error identificando al participante:", err);
+    return json({ code: "SERVER_ERROR", error: "No se pudo identificar al participante" }, 500);
   }
 };
