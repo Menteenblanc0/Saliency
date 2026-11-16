@@ -9,7 +9,7 @@
 // hay que cambiar `version`: se guarda con la fecha de cada autorización
 // (participants.consent_version / consent_at) como prueba de qué texto aceptó.
 export const PRIVACY = {
-  version: "2026-11-v1",
+  version: "2026-11-v2",
   responsable:
     "Christopher Alexandro Morán Rodríguez",
   contacto:

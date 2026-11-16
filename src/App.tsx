@@ -67,7 +67,7 @@ const countDone = (p: Participant) => p.ordered.filter((img) => p.done.has(img.i
 function targetFor(p: Participant): Target {
   if (p.completed) return { screen: "complete", index: 0 };
   const index = findNextPending(p.ordered, p.done, 0);
-  return index === -1 ? { screen: "comment", index: 0 } : { screen: "annotation", index };
+  return index === -1 ? { screen: "comment", index: Math.max(0, p.ordered.length - 1) } : { screen: "annotation", index };
 }
 
 export default function App() {
@@ -138,7 +138,7 @@ export default function App() {
     setScreen(target.screen);
   };
 
-  // Pasa a la siguiente imagen pendiente o, si no queda ninguna, al comentario.
+  // Pasa al comentario de la imagen guardada, o salta la imagen con error.
   // Se llama cuando el servidor confirmó el guardado (saved) o al saltar una
   // imagen que no carga (no se guarda y seguirá pendiente).
   const goToNextImage = (saved: boolean) => {
@@ -147,9 +147,22 @@ export default function App() {
     const done = new Set(participant.done);
     if (saved) done.add(participant.ordered[imageIndex].id);
     setParticipant({ ...participant, done });
+    if (saved) {
+      // La anotación ya está guardada: solicitar el comentario opcional de esta imagen.
+      setScreen("comment");
+      return;
+    }
     const next = findNextPending(participant.ordered, done, imageIndex + 1);
     if (next === -1) {
-      setScreen("comment");
+      // No queda ninguna imagen posterior; recuperar la primera pendiente.
+      const pending = findNextPending(participant.ordered, done, 0);
+      if (pending === -1) {
+        setScreen("comment");
+        return;
+      }
+      setNextIndex(pending);
+      setScreen("transition");
+      setTimeout(() => { setImageIndex(pending); setScreen("annotation"); }, 900);
       return;
     }
     setNextIndex(next);
@@ -164,6 +177,26 @@ export default function App() {
   const handleAnnotationDone = (strokes: Stroke[]) => {
     setPendingStrokes(strokes);
     setScreen("rating");
+  };
+
+  // El comentario, si existe, ya se guardó. Avanzar o cerrar el estudio.
+  const handleCommentContinue = async () => {
+    if (!participant) return;
+    const next = findNextPending(participant.ordered, participant.done, imageIndex + 1);
+    if (next === -1) {
+      const firstPending = findNextPending(participant.ordered, participant.done, 0);
+      if (firstPending === -1) {
+        await handleFinish();
+        return;
+      }
+      setNextIndex(firstPending);
+      setScreen("transition");
+      setTimeout(() => { setImageIndex(firstPending); setScreen("annotation"); }, 900);
+      return;
+    }
+    setNextIndex(next);
+    setScreen("transition");
+    setTimeout(() => { setImageIndex(next); setScreen("annotation"); }, 900);
   };
 
   // Pausa: se olvida al participante en este navegador; el progreso queda en el servidor.
@@ -241,7 +274,7 @@ export default function App() {
         <TransitionScreen current={countDone(participant)} next={nextIndex + 1} total={total} />
       )}
       {view === "comment" && participant && (
-        <CommentScreen participantId={participant.participantId} onFinish={handleFinish} />
+        <CommentScreen key={ordered[imageIndex]?.id} participantId={participant.participantId} image={ordered[imageIndex]} imageNumber={imageIndex + 1} total={total} onContinue={handleCommentContinue} />
       )}
       {view === "complete" && <CompleteScreen total={total || catalog.length} />}
     </div>
