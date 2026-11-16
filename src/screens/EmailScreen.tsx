@@ -58,9 +58,9 @@ export function EmailScreen({
       }
     } catch (err) {
       console.error("No se pudo identificar al participante:", err);
-      if (err instanceof ApiError && err.status === 400) {
+      if (err instanceof ApiError && err.code === "INVALID_EMAIL") {
         setError(content.email.invalid);
-        setPhase("form"); // el servidor rechazó el correo: se corrige
+        setPhase("form"); // el servidor rechazó el formato: se corrige
       } else {
         setError(content.email.networkError);
       }

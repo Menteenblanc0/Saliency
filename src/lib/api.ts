@@ -1,18 +1,23 @@
 import type { DesignAnswer, ImageItem, Stroke } from "./types";
 
-// Error de la API con el código HTTP, para distinguir "correo inválido" (400)
-// o "participante desconocido" (404) de un fallo de red o del servidor.
+// Incluye el código funcional del servidor cuando la respuesta lo proporciona.
 export class ApiError extends Error {
-  status: number;
-  constructor(status: number) {
+  constructor(public status: number, public code?: string) {
     super(`La función respondió con error ${status}`);
-    this.status = status;
   }
+}
+
+async function ensureOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const data: unknown = await res.json().catch(() => null);
+  const code = typeof data === "object" && data !== null && "code" in data
+    && typeof data.code === "string" ? data.code : undefined;
+  throw new ApiError(res.status, code);
 }
 
 export async function fetchImages(): Promise<ImageItem[]> {
   const res = await fetch("/.netlify/functions/images");
-  if (!res.ok) throw new ApiError(res.status);
+  await ensureOk(res);
   const data = await res.json();
   return data.images as ImageItem[];
 }
@@ -25,7 +30,7 @@ async function postJson(path: string, payload: unknown): Promise<unknown> {
   });
   // El backend responde 200 también cuando el registro ya existía
   // (guardado idempotente), así que un reintento nunca falla por duplicado.
-  if (!res.ok) throw new ApiError(res.status);
+  await ensureOk(res);
   return res.json().catch(() => ({}));
 }
 
@@ -40,7 +45,8 @@ async function postJson(path: string, payload: unknown): Promise<unknown> {
 //                      participante (el servidor lo decide y lo reconcilia)
 //         doneImageIds ids de las imágenes que ya tienen anotación guardada
 //         completed    true si ya cerró la encuesta
-//   400:  correo inválido o falta la autorización      404: participantId desconocido
+//   400: INVALID_EMAIL, CONSENT_REQUIRED o INVALID_REQUEST
+//   404: NOT_FOUND (participantId desconocido)
 //
 // POST /.netlify/functions/complete   body: { participantId }   200: { ok: true }
 export interface ParticipantState {
